@@ -54,19 +54,25 @@ async def list_wiki_pages(
         count_query = count_query.where(WikiPage.page_type == page_type)
 
     if search:
-        search_pattern = f"%{search}%"
+        term = search.strip()
+        search_pattern = f"%{term}%"
         title_filter = WikiPage.title.ilike(search_pattern)
         content_filter = WikiPage.content.ilike(search_pattern)
 
-        # Match on title OR content, but rank title matches first so a search
-        # term that appears in a page title always surfaces above pages that
-        # only mention it in their body.
+        # Match on title OR content, ranked by how closely the title matches:
+        # exact title, then title prefix, then title substring, then pages
+        # that only mention the term in their body.
         search_filter = title_filter | content_filter
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
 
-        title_rank = case((title_filter, 0), else_=1)
-        query = query.order_by(title_rank, desc(WikiPage.updated_at))
+        rank = case(
+            (func.lower(WikiPage.title) == term.lower(), 0),
+            (WikiPage.title.ilike(f"{term}%"), 1),
+            (title_filter, 2),
+            else_=3,
+        )
+        query = query.order_by(rank, desc(WikiPage.updated_at))
     else:
         query = query.order_by(desc(WikiPage.updated_at))
 

@@ -117,6 +117,47 @@ def test_wiki_search_ranks_title_matches_first(client):
     page2 = client.get("/api/wiki", params={"search": "needle", "page": 2, "page_size": 1})
     assert [item["id"] for item in page2.json()["items"]] == [content_only["id"]]
 
+    # Tiered title ranking: exact > prefix > substring, regardless of recency.
+    substring = client.post(
+        "/api/wiki",
+        json={
+            "title": "Finding A Needle Fast",
+            "slug": "finding-a-needle-fast",
+            "content": "no keyword here",
+            "page_type": "summary",
+        },
+    ).json()
+    prefix = client.post(
+        "/api/wiki",
+        json={
+            "title": "Needle Variants",
+            "slug": "needle-variants",
+            "content": "no keyword here",
+            "page_type": "summary",
+        },
+    ).json()
+    exact = client.post(
+        "/api/wiki",
+        json={
+            "title": "Needle",
+            "slug": "needle",
+            "content": "no keyword here",
+            "page_type": "summary",
+        },
+    ).json()
+
+    ranked = client.get("/api/wiki", params={"search": "needle"})
+    ranked_ids = [item["id"] for item in ranked.json()["items"]]
+    # exact first; prefix tier contains both "Needle Variants" and
+    # "Needle In Title" (newest first); then substring; content-only last.
+    assert ranked_ids == [
+        exact["id"],
+        prefix["id"],
+        titled["id"],
+        substring["id"],
+        content_only["id"],
+    ]
+
     # Content-only term still matches via full-text search.
     content_hit = client.get("/api/wiki", params={"search": "somewhere"})
     content_body = content_hit.json()
