@@ -4,11 +4,12 @@ import logging
 import re
 from datetime import datetime
 
-from sqlalchemy import select, func, and_, or_, desc, case
+from sqlalchemy import select, func, and_, or_, desc, case, delete, update
 from sqlalchemy.orm import selectinload
 
 from app.core.database import async_session_maker
 from app.models.wiki import WikiPage, WikiLink
+from app.models.entity import Entity
 from app.models.log import IngestionLog
 from app.schemas.wiki import WikiPageCreate, WikiPageResponse, WikiPageList, WikiLinkResponse
 
@@ -148,6 +149,50 @@ class WikiService:
 
             logger.info(f"Deleted wiki page: {page.title} (id={page_id})")
             return True
+
+    async def delete_pages_for_source(self, source_id: int) -> int:
+        """Delete all wiki pages (and their links) for a source; clear entity refs.
+
+        Makes wiki generation idempotent: a re-ingest/retry replaces the source's
+        pages instead of appending a fresh slug-uniquified set (the cause of the
+        duplicate-page accumulation). Returns the number of pages removed.
+        """
+        async with async_session_maker() as session:
+            pages = (
+                await session.execute(
+                    select(WikiPage).where(WikiPage.source_id == source_id)
+                )
+            ).scalars().all()
+            if not pages:
+                return 0
+            page_ids = [p.id for p in pages]
+            # Clear entity references to these pages.
+            await session.execute(
+                update(Entity)
+                .where(Entity.wiki_page_id.in_(page_ids))
+                .values(wiki_page_id=None)
+            )
+            # Remove links touching these pages (FK), then the pages.
+            await session.execute(
+                delete(WikiLink).where(
+                    or_(
+                        WikiLink.from_page_id.in_(page_ids),
+                        WikiLink.to_page_id.in_(page_ids),
+                    )
+                )
+            )
+            await session.execute(delete(WikiPage).where(WikiPage.id.in_(page_ids)))
+            await session.commit()
+
+        if self.storage_service:
+            for page in pages:
+                try:
+                    await self.storage_service.delete_wiki_page(page.slug, page.page_type)
+                except Exception as exc:
+                    logger.warning("Failed to delete wiki page file %s: %s", page.slug, exc)
+
+        logger.info("Deleted %s wiki pages for source %s", len(pages), source_id)
+        return len(pages)
 
     async def list_pages(
         self,

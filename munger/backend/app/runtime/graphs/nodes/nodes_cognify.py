@@ -225,6 +225,13 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
             updated = 0
             summary_page_id: int | None = None
 
+            # Idempotency: drop any pages from a prior run/retry of this source before
+            # regenerating, so re-ingests replace rather than accumulate -N duplicates.
+            if services.wiki:
+                removed = await services.wiki.delete_pages_for_source(source_id)
+                if removed:
+                    m["pages_removed"] = removed
+
             if source and services.wiki and services.llm:
                 text = source.content_text or ""
                 summary = source.content_summary or ""
