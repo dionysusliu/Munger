@@ -17,6 +17,15 @@ class TestIngestGraphCompile:
         assert "link_entities" in GRAPH_STEP_ORDER
         assert GRAPH_STEP_ORDER.index("link_entities") > GRAPH_STEP_ORDER.index("reduce_entities")
 
+    def test_salience_gate_runs_between_link_and_wiki(self):
+        # n_select must sit after linking and before page generation.
+        assert "select_entities" in GRAPH_STEP_ORDER
+        assert (
+            GRAPH_STEP_ORDER.index("link_entities")
+            < GRAPH_STEP_ORDER.index("select_entities")
+            < GRAPH_STEP_ORDER.index("generate_wiki_pages")
+        )
+
     def test_subgraphs_compile(self):
         settings = Settings(ingest_orchestrator="graph", ingest_map_mode="service")
         services = RuntimeServices(
@@ -38,4 +47,4 @@ class TestIngestGraphCompile:
         assert intake is not None
         assert cognify is not None
         assert parent is not None
-        assert len(GRAPH_STEP_ORDER) == 11
+        assert len(GRAPH_STEP_ORDER) == 12

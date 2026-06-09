@@ -88,6 +88,7 @@ const PIPELINE_STEPS = [
   { key: 'map_chunks', label: 'Mapping chunks' },
   { key: 'reduce_entities', label: 'Merging entities' },
   { key: 'link_entities', label: 'Linking entities' },
+  { key: 'select_entities', label: 'Selecting key entities' },
   { key: 'summarize_source', label: 'Writing summary' },
   { key: 'generate_wiki_pages', label: 'Creating wiki pages' },
   { key: 'link_wiki_pages', label: 'Linking pages' },
