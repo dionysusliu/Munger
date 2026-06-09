@@ -1,10 +1,16 @@
 """Application configuration using pydantic-settings."""
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+# Canonical env file: munger/.env (this file is munger/backend/app/core/config.py).
+# Resolved absolutely so local runs load it regardless of CWD; in Docker the path
+# is absent and pydantic falls back to the compose-injected environment variables.
+_ENV_FILE = str(Path(__file__).resolve().parents[3] / ".env")
 
 # Ollama-local embedding model ids — invalid when LLM_DEFAULT_PROVIDER=openrouter.
 OLLAMA_ONLY_EMBEDDING_MODELS = frozenset(
@@ -127,8 +133,12 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE
         populate_by_name = True
+        # munger/.env also holds infra keys consumed by docker-compose substitution
+        # (e.g. MUNGER_POSTGRES_HOST) that are not Settings fields; ignore them rather
+        # than erroring when the file is loaded directly in a local run.
+        extra = "ignore"
 
     @model_validator(mode="after")
     def validate_openrouter_embedding_model(self) -> "Settings":
