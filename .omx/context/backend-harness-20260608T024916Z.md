@@ -1,0 +1,32 @@
+# Ralph Context Snapshot
+
+- task statement: Implement the approved backend/frontend smoke and e2e harness plan.
+- desired outcome: Land the first-pass harness with deterministic backend tests, provider-backed integration tests, and thin frontend smoke coverage.
+- known facts/evidence:
+  - Backend is FastAPI + SQLAlchemy + SQLite under `munger/backend/`.
+  - Frontend is React + Vite under `app/`.
+  - There are currently no backend Python tests and no frontend test toolchain.
+  - Dockerized local deployment is working on `18000` backend and `13000` frontend.
+  - Provider for live checks is OpenRouter via `OPENROUTER_API_KEY`.
+  - Deep-interview/ralplan scope:
+    - deterministic backend `pytest` suite for non-provider flows
+    - provider-backed required gate checks for model-dependent flows
+    - blocked external dependency status when OpenRouter creds/network are unavailable
+    - first provider-backed e2e path is `source upload -> ingest -> entity/wiki generation`
+    - thin frontend smoke layer only
+- constraints:
+  - no performance/load testing
+  - no cross-provider matrix
+  - no full workflow/search/munger e2e yet
+  - no full frontend behavior suite
+  - secrets remain env-based
+- unknowns/open questions:
+  - exact fixture architecture needed for async DB + temp data dirs
+  - whether ingest path currently works end-to-end enough for provider-backed tests without extra bug fixes
+- likely codebase touchpoints:
+  - `munger/backend/app/api/`
+  - `munger/backend/app/core/`
+  - `munger/backend/app/services/`
+  - `munger/backend/requirements.txt`
+  - `app/package.json`
+  - future `munger/backend/tests/` and `app` smoke test files

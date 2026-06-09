@@ -1,0 +1,109 @@
+{
+  "active": false,
+  "current_phase": "complete",
+  "interview_id": "06d88b1f-7887-4711-85b3-81872b494fb3",
+  "profile": "standard",
+  "type": "brownfield",
+  "initial_idea": "Discuss what harness should we build for the backend",
+  "rounds": [
+    {
+      "round": 1,
+      "question": "When you say backend harness, do you want the first-class target to be a deterministic pytest suite that can run in CI without real provider calls, or a live Docker black-box suite against the running API, with provider-backed checks as part of the default path?",
+      "answer": "Separate two categories: deterministic pytest suite for flows without provider calls; for flows with API calls, do 1) basic schema check from the provider and 2) mock-data end-to-end workflow.",
+      "source": "from-user"
+    },
+    {
+      "round": 2,
+      "question": "For the provider-backed layer, should those tests be opt-in only, such as OPENROUTER_API_KEY required and skipped by default in CI, or do you want them treated as required gate checks whenever credentials are available?",
+      "answer": "Treat them as required gate checks.",
+      "source": "from-user"
+    },
+    {
+      "round": 3,
+      "question": "If OPENROUTER_API_KEY is missing or OpenRouter is transiently failing, should the gate fail hard, or should the deterministic suite still pass while the provider-backed stage reports a blocked external dependency?",
+      "answer": "The provider-backed stage should report a blocked external dependency.",
+      "source": "from-user"
+    },
+    {
+      "round": 4,
+      "question": "For the first provider-backed mock-data e2e workflow, what is the minimum end-to-end path that must be covered: source upload -> ingest -> entity/wiki generation, or the full path including workflow run, search, and munger analysis as one required scenario?",
+      "answer": "We should start from the source upload -> ingest -> entity/wiki generation steps.",
+      "source": "from-user"
+    },
+    {
+      "round": 5,
+      "question": "What should be explicitly out of scope for the first harness pass: for example, no frontend tests, no performance/load tests, no full cross-provider matrix, and no full workflow/search/Munger end-to-end scenario yet?",
+      "answer": "Need basic frontend tests. No performance test. No cross-provider matrix. No full workflow/search/munger e2e yet.",
+      "source": "from-user"
+    },
+    {
+      "round": 6,
+      "question": "When you say basic frontend tests, do you mean only a thin smoke layer that proves the mock-data UI renders and calls the expected backend routes, or do you want real frontend behavior tests included in the same first-pass harness scope?",
+      "answer": "Just thin smoke layer.",
+      "source": "from-user"
+    }
+  ],
+  "current_ambiguity": 0.14,
+  "threshold": 0.2,
+  "max_rounds": 12,
+  "challenge_modes_used": [
+    "contrarian",
+    "simplifier"
+  ],
+  "codebase_context": {
+    "backend": "FastAPI + SQLAlchemy + SQLite",
+    "api_groups": [
+      "sources",
+      "wiki",
+      "entities",
+      "search",
+      "workflows",
+      "munger",
+      "config"
+    ],
+    "tests_present": false,
+    "live_backend_port": 18000
+  },
+  "current_stage": "complete",
+  "current_focus": "handoff",
+  "context_snapshot_path": ".omx/context/backend-harness-20260608T022626Z.md",
+  "summary": {
+    "intent": "Build a durable backend harness with deterministic local coverage plus provider-backed required gate checks.",
+    "desired_outcome": "Two-lane test strategy with deterministic pytest coverage for non-provider flows and provider-backed checks for model-dependent flows.",
+    "in_scope": [
+      "deterministic backend pytest suite",
+      "provider schema checks",
+      "provider-backed e2e for source upload -> ingest -> entity/wiki generation",
+      "thin frontend smoke layer"
+    ],
+    "non_goals": [
+      "no performance tests",
+      "no cross-provider matrix",
+      "no full workflow/search/munger e2e yet",
+      "no full frontend behavior suite"
+    ],
+    "decision_boundaries": {
+      "omx_may_decide": [
+        "test libraries",
+        "fixture model",
+        "file layout",
+        "thin frontend smoke tool"
+      ],
+      "omx_must_not_expand_without_confirmation": [
+        "performance testing",
+        "multi-provider matrix",
+        "broader frontend behavioral coverage",
+        "full product e2e beyond first provider-backed path"
+      ]
+    },
+    "constraints": [
+      "provider-backed checks are required gate checks",
+      "missing or flaky OpenRouter should report blocked external dependency",
+      "secrets remain env-based"
+    ],
+    "handoff_recommendation": "ralplan"
+  },
+  "run_outcome": "finish",
+  "lifecycle_outcome": "finished",
+  "completed_at": "2026-06-08T02:41:56.337Z"
+}

@@ -1,0 +1,6 @@
+"""Golden corpus metadata for cross-chunk linking tests."""
+
+SAMPLE_DOC = (
+    "Charlie Munger was a legendary investor. "
+    "Later in life Munger emphasized mental models."
+)

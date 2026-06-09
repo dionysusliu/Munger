@@ -1,0 +1,120 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1781023537981,
+  "projectRoot": "/Users/chuang/Documents/dev/projects/Munger",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "pyproject.toml"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "pytest",
+        "version": null,
+        "category": "testing"
+      }
+    ],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": "pytest",
+    "lintCommand": "ruff check",
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "app"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "app": {
+      "path": "app",
+      "purpose": "Application code",
+      "fileCount": 15,
+      "lastAccessed": 1781023537976,
+      "keyFiles": [
+        "AGENTS.md",
+        "README.md",
+        "components.json",
+        "eslint.config.js",
+        "index.html"
+      ]
+    },
+    "ideas": {
+      "path": "ideas",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1781023537976,
+      "keyFiles": []
+    },
+    "munger": {
+      "path": "munger",
+      "purpose": null,
+      "fileCount": 7,
+      "lastAccessed": 1781023537976,
+      "keyFiles": [
+        "AGENTS.md",
+        "README.md",
+        "docker-compose.yml",
+        "start.sh"
+      ]
+    },
+    "state": {
+      "path": "state",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1781023537976,
+      "keyFiles": [
+        "cancel-signal-state.json"
+      ]
+    },
+    "app/dist": {
+      "path": "app/dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 7,
+      "lastAccessed": 1781023537976,
+      "keyFiles": [
+        "empty-state-graph.jpg",
+        "empty-state-search.jpg",
+        "empty-state-wiki.jpg"
+      ]
+    },
+    "app/node_modules": {
+      "path": "app/node_modules",
+      "purpose": "Dependencies",
+      "fileCount": 1,
+      "lastAccessed": 1781023537977,
+      "keyFiles": []
+    },
+    "munger/data": {
+      "path": "munger/data",
+      "purpose": "Data files",
+      "fileCount": 1,
+      "lastAccessed": 1781023537978,
+      "keyFiles": [
+        "munger.db"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

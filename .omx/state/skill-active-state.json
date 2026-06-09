@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "active": false,
+  "skill": "ralph",
+  "keyword": "",
+  "phase": "verifying",
+  "activated_at": "2026-06-08T03:10:28.627Z",
+  "updated_at": "2026-06-08T03:18:22.397Z",
+  "source": "state-operations",
+  "active_skills": [],
+  "reconciled_at": "2026-06-08T03:02:28.844Z",
+  "reconciliation_reason": "stop_hook_session_state_terminal"
+}

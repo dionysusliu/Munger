@@ -1,0 +1,128 @@
+networks:
+  pigsty:
+    external: true
+    name: docker_default
+
+services:
+  munger-db-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: munger-db-init
+    command: python scripts/bootstrap_postgres.py
+    environment:
+      - MUNGER_POSTGRES_ADMIN_URL=${MUNGER_POSTGRES_ADMIN_URL:-postgresql://dbuser_dba:DBUser.DBA@${MUNGER_POSTGRES_HOST:-pigsty}:5432/postgres}
+      - MUNGER_POSTGRES_APP_USER=${MUNGER_POSTGRES_APP_USER:-munger_app}
+      - MUNGER_DB_PASSWORD=${MUNGER_DB_PASSWORD:-Munger.App.2026}
+      - MUNGER_POSTGRES_APP_DB=${MUNGER_POSTGRES_APP_DB:-munger}
+    networks:
+      - default
+      - pigsty
+    restart: "no"
+
+  munger-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: munger-backend
+    ports:
+      - "${BACKEND_PORT:-18000}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./data/sources:/app/data/sources
+      - ./data/wiki:/app/data/wiki
+      - ./data/schema:/app/data/schema
+      - ../.cursor:/Users/chuang/Documents/dev/projects/Munger/.cursor
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
+      - MUNGER_CHECKPOINTER_URL=postgresql://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
+      - DATA_DIR=/app/data
+      - TESSDATA_PREFIX=/app/tessdata
+      - OCR_ENABLED=true
+      - OCR_LANGUAGE=eng+chi_sim
+      - DEBUG=false
+      - LLM_DEFAULT_PROVIDER=${LLM_DEFAULT_PROVIDER:-openrouter}
+      - LLM_DEFAULT_MODEL=${LLM_DEFAULT_MODEL:-deepseek/deepseek-v4-flash}
+      - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
+      - LLM_EMBEDDING_DIMENSIONS=${LLM_EMBEDDING_DIMENSIONS:-768}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LLM_MAX_CONTEXT_TOKENS=${LLM_MAX_CONTEXT_TOKENS:-8192}
+      - MUNGER_MAX_AGENT_STEPS=${MUNGER_MAX_AGENT_STEPS:-20}
+      - MUNGER_WORKER_CONCURRENCY=${MUNGER_WORKER_CONCURRENCY:-0}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-munger-ingest}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-true}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-munger-ingest}
+      - LANGCHAIN_CALLBACKS_BACKGROUND=${LANGCHAIN_CALLBACKS_BACKGROUND:-false}
+    networks:
+      - default
+      - pigsty
+    depends_on:
+      munger-db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  munger-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: munger-worker
+    command: python -m app.worker
+    volumes:
+      - ./data:/app/data
+      - ./data/sources:/app/data/sources
+      - ./data/wiki:/app/data/wiki
+      - ./data/schema:/app/data/schema
+      - ../.cursor:/Users/chuang/Documents/dev/projects/Munger/.cursor
+    environment:
+      - DATABASE_URL=postgresql+psycopg://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
+      - MUNGER_CHECKPOINTER_URL=postgresql://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
+      - DATA_DIR=/app/data
+      - TESSDATA_PREFIX=/app/tessdata
+      - OCR_ENABLED=true
+      - OCR_LANGUAGE=eng+chi_sim
+      - LLM_DEFAULT_PROVIDER=${LLM_DEFAULT_PROVIDER:-openrouter}
+      - LLM_DEFAULT_MODEL=${LLM_DEFAULT_MODEL:-deepseek/deepseek-v4-flash}
+      - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
+      - LLM_EMBEDDING_DIMENSIONS=${LLM_EMBEDDING_DIMENSIONS:-768}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LLM_MAX_CONTEXT_TOKENS=${LLM_MAX_CONTEXT_TOKENS:-8192}
+      - MUNGER_MAX_AGENT_STEPS=${MUNGER_MAX_AGENT_STEPS:-20}
+      - MUNGER_WORKER_ID=${MUNGER_WORKER_ID:-worker-1}
+      - MUNGER_WORKER_CONCURRENCY=${MUNGER_WORKER_CONCURRENCY:-0}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-munger-ingest}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-true}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-munger-ingest}
+      - LANGCHAIN_CALLBACKS_BACKGROUND=${LANGCHAIN_CALLBACKS_BACKGROUND:-false}
+    networks:
+      - default
+      - pigsty
+    depends_on:
+      munger-db-init:
+        condition: service_completed_successfully
+      munger-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  munger-frontend:
+    build:
+      context: ..
+      dockerfile: munger/frontend/Dockerfile
+    container_name: munger-frontend
+    ports:
+      - "${FRONTEND_PORT:-13000}:80"
+    depends_on:
+      munger-backend:
+        condition: service_healthy
+    restart: unless-stopped

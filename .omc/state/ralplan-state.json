@@ -1,0 +1,12 @@
+{
+  "active": false,
+  "current_phase": "complete",
+  "plan_path": ".omx/plans/ralplan-cognee-inspired-pipeline-refactor.md",
+  "completed_at": "2026-06-09T08:10:00Z",
+  "_meta": {
+    "mode": "ralplan",
+    "sessionId": null,
+    "updatedAt": "2026-06-09T08:20:55.433Z",
+    "updatedBy": "state_write_tool"
+  }
+}

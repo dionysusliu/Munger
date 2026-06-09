@@ -1,0 +1,24 @@
+{
+  "sessions": {
+    "019ea4ef-210a-7823-b175-70f1e4b10f50": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|saved the current checkpoint to [plan.md](/users/chuang/documents/dev/projects/munger/plan.md). it includes: - completed harness work - backend fixes landed - verification evidence - current openrouter blocker - residual risks - next recommended steps",
+        "first_seen_at": "2026-06-08T03:20:41.064Z",
+        "last_seen_at": "2026-06-08T03:20:41.064Z",
+        "repeat_count": 1,
+        "last_turn_id": "019ea53e-905e-7e20-a8bf-aa4be1b55d73",
+        "last_thread_id": null
+      }
+    },
+    "019ea52e-2db1-7021-a573-31fabc6154cc": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|i'm codex — a coding agent running in the codex cli. i'm here to help you build, debug, refactor, and navigate your codebase. right now i'm working in your **munger** project (react + typescript frontend in `app/`, docker-based backend in `munger/`). what can i help you with?",
+        "first_seen_at": "2026-06-08T03:02:28.849Z",
+        "last_seen_at": "2026-06-08T03:02:28.849Z",
+        "repeat_count": 1,
+        "last_turn_id": "019ea52e-555c-78e2-b60d-a82417c4ba46",
+        "last_thread_id": null
+      }
+    }
+  }
+}

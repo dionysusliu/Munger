@@ -1,0 +1,18 @@
+{
+  "active": false,
+  "current_phase": "complete",
+  "completed_at": "2026-06-09T09:00:00Z",
+  "interview_id": "ingest-pipeline-hardening",
+  "profile": "standard",
+  "final_ambiguity": 0.13,
+  "threshold": 0.2,
+  "rounds_completed": 9,
+  "spec_path": ".omx/specs/deep-interview-ingest-pipeline-hardening.md",
+  "transcript_path": ".omx/interviews/ingest-pipeline-hardening-20260609T090000Z.md",
+  "_meta": {
+    "mode": "deep-interview",
+    "sessionId": null,
+    "updatedAt": "2026-06-09T08:59:47.277Z",
+    "updatedBy": "state_write_tool"
+  }
+}
