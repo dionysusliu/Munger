@@ -347,16 +347,65 @@ class LinkingService:
     # Stage R-CAND + R-LINK: co-mention → related relationships
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _co_mention_pairs(
+        chunk_entities: dict[int, set[int]],
+        entity_chunks: dict[int, set[int]],
+        *,
+        min_cooccur: int,
+        max_degree: int,
+    ) -> dict[tuple[int, int], tuple[int, int]]:
+        """Select meaningful co-mention pairs.
+
+        Returns ``{(a, b): (weight, supporting_chunk)}`` for entity pairs that share at
+        least ``min_cooccur`` chunks, keeping only each entity's top-``max_degree``
+        partners by shared-chunk count. This replaces the previous all-pairs dump (one
+        edge for any single shared chunk) that produced ~77k meaningless edges.
+        """
+        from collections import defaultdict
+
+        candidates: set[tuple[int, int]] = set()
+        for entity_ids in chunk_entities.values():
+            lst = sorted(entity_ids)
+            for i in range(len(lst)):
+                for j in range(i + 1, len(lst)):
+                    candidates.add((lst[i], lst[j]))
+
+        weighted: list[tuple[int, int, int, int]] = []  # (weight, a, b, supporting_chunk)
+        for a, b in candidates:
+            shared = entity_chunks.get(a, set()) & entity_chunks.get(b, set())
+            if len(shared) >= min_cooccur:
+                weighted.append((len(shared), a, b, min(shared)))
+
+        # Degree cap: keep an edge only if it is in BOTH endpoints' top-`max_degree`
+        # partners (by weight). This strictly bounds every node's degree to max_degree,
+        # so a hub entity cannot link to everything via low-degree partners.
+        deg: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for w, a, b, _ch in weighted:
+            deg[a].append((w, b))
+            deg[b].append((w, a))
+        topn: dict[int, set[int]] = {}
+        for node, edges in deg.items():
+            edges.sort(key=lambda x: (-x[0], x[1]))
+            topn[node] = {other for _w, other in edges[:max_degree]}
+
+        result: dict[tuple[int, int], tuple[int, int]] = {}
+        for w, a, b, ch in weighted:
+            if b in topn.get(a, ()) and a in topn.get(b, ()):
+                key = (a, b) if a < b else (b, a)
+                result[key] = (w, ch)
+        return result
+
     async def _link_by_co_mention(
         self,
         source_id: int,
         entities: list[Entity],
     ) -> int:
-        """Create ``related`` EntityRelationship rows for co-mentioned pairs.
+        """Create thresholded ``related`` EntityRelationship rows for co-mentioned pairs.
 
-        A pair (A, B) is a candidate if both appear in ≥1 common chunk.
-        Uses co_mention method with confidence=0.6.  Previous link-method
-        relationships for this source are deleted first (idempotent).
+        A pair is kept only if both entities share ≥ ``ingest_link_min_cooccur`` chunks,
+        bounded to each entity's top ``ingest_link_max_degree`` partners. Previous
+        link-method relationships for this source are deleted first (idempotent).
         """
         link_methods = ("co_mention", "lexical", "semantic", "hybrid", "llm")
 
@@ -377,22 +426,20 @@ class LinkingService:
             chunk_entities: dict[int, set[int]] = {}
             entity_chunks: dict[int, set[int]] = {}
             for row in rows:
+                if row.chunk_id is None:
+                    continue
                 chunk_entities.setdefault(row.chunk_id, set()).add(row.entity_id)
                 entity_chunks.setdefault(row.entity_id, set()).add(row.chunk_id)
 
-            co_pairs: set[tuple[int, int]] = set()
-            for entity_ids in chunk_entities.values():
-                lst = sorted(entity_ids)
-                for i in range(len(lst)):
-                    for j in range(i + 1, len(lst)):
-                        co_pairs.add((lst[i], lst[j]))
+            pairs = self._co_mention_pairs(
+                chunk_entities,
+                entity_chunks,
+                min_cooccur=self.settings.ingest_link_min_cooccur,
+                max_degree=self.settings.ingest_link_max_degree,
+            )
 
             links_created = 0
-            for src_eid, tgt_eid in co_pairs:
-                shared = entity_chunks.get(src_eid, set()) & entity_chunks.get(tgt_eid, set())
-                if not shared:
-                    continue
-                supporting_chunk = min(shared)
+            for (src_eid, tgt_eid), (weight, supporting_chunk) in pairs.items():
                 stmt = pg_insert(EntityRelationship).values(
                     source_entity_id=src_eid,
                     target_entity_id=tgt_eid,
@@ -401,7 +448,7 @@ class LinkingService:
                     confidence=0.6,
                     source_id=source_id,
                     chunk_id=supporting_chunk,
-                    description=f"Co-mentioned in {len(shared)} chunk(s)",
+                    description=f"Co-mentioned in {weight} chunk(s)",
                 )
                 stmt = stmt.on_conflict_do_nothing(
                     index_elements=[

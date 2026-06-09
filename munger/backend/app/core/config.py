@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     ingest_instructor_enabled: bool = Field(default=True, alias="INGEST_INSTRUCTOR_ENABLED")
     ingest_allow_null_embedding: bool = Field(default=False, alias="INGEST_ALLOW_NULL_EMBEDDING")
 
+    # Co-mention linking thresholds — bound the "related" edge explosion.
+    ingest_link_min_cooccur: int = Field(default=2, alias="INGEST_LINK_MIN_COOCCUR")
+    ingest_link_max_degree: int = Field(default=15, alias="INGEST_LINK_MAX_DEGREE")
+
     # Cross-chunk linking tunables (plan §4)
     link_fuzzy_ratio: int = Field(default=90, alias="INGEST_LINK_FUZZY_RATIO")
     link_fuzzy_trgm: float = Field(default=0.45, alias="INGEST_LINK_TRGM")
