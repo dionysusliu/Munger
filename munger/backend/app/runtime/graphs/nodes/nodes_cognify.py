@@ -456,7 +456,40 @@ async def _entities_for_source(source_id: int) -> list[EntityRef]:
         ]
 
 
-def _excerpt_from_mention(source_text: str, mention: EntityMention) -> str:
-    if mention.char_start is not None and mention.char_end is not None:
-        return source_text[mention.char_start: mention.char_end]
-    return mention.context or ""
+_WS_RE = re.compile(r"\s+")
+_SENT_BOUNDARY_RE = re.compile(r"[.!?]\s")
+
+
+def _clean_ws(text: str) -> str:
+    """Collapse runs of whitespace (PDF extraction mangles spacing)."""
+    return _WS_RE.sub(" ", text or "").strip()
+
+
+def _excerpt_from_mention(source_text: str, mention: EntityMention, *, window: int = 200) -> str:
+    """Return a readable sentence window around the mention span.
+
+    The raw ``[char_start, char_end]`` span is just the entity surface form (a few
+    chars), which makes a useless ``> Foo`` citation. Expand to the surrounding
+    sentence (bounded by ``window`` chars), snapping to sentence terminators, and
+    collapse mangled whitespace. Fall back to ``mention.context`` when offsets are
+    missing or out of range.
+    """
+    start = getattr(mention, "char_start", None)
+    end = getattr(mention, "char_end", None)
+    n = len(source_text)
+    if start is None or end is None or not (0 <= start < end <= n):
+        return _clean_ws(getattr(mention, "context", "") or "")
+
+    lo = max(0, start - window)
+    hi = min(n, end + window)
+    # Snap left to the start of the sentence containing the span.
+    left = source_text[lo:start]
+    boundaries = list(_SENT_BOUNDARY_RE.finditer(left))
+    if boundaries:
+        lo += boundaries[-1].end()
+    # Snap right to the end of that sentence.
+    right = source_text[end:hi]
+    m = _SENT_BOUNDARY_RE.search(right)
+    if m:
+        hi = end + m.end()
+    return _clean_ws(source_text[lo:hi])
