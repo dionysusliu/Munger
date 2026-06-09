@@ -47,6 +47,8 @@ class CognifyState(TypedDict, total=False):
     map_metrics: Annotated[dict, merge_dicts]
     reduce_metrics: dict
     link_metrics: dict
+    select_metrics: dict
+    selected_entity_ids: list[int]
     summary_chars: int
     wiki_metrics: dict
     error: str | None

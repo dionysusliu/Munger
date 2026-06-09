@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func, desc, asc
+from sqlalchemy import select, func, desc, asc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -54,15 +54,27 @@ async def list_wiki_pages(
         count_query = count_query.where(WikiPage.page_type == page_type)
 
     if search:
-        search_pattern = f"%{search}%"
-        query = query.where(
-            WikiPage.title.ilike(search_pattern) | WikiPage.content.ilike(search_pattern)
-        )
-        count_query = count_query.where(
-            WikiPage.title.ilike(search_pattern) | WikiPage.content.ilike(search_pattern)
-        )
+        term = search.strip()
+        search_pattern = f"%{term}%"
+        title_filter = WikiPage.title.ilike(search_pattern)
+        content_filter = WikiPage.content.ilike(search_pattern)
 
-    query = query.order_by(desc(WikiPage.updated_at))
+        # Match on title OR content, ranked by how closely the title matches:
+        # exact title, then title prefix, then title substring, then pages
+        # that only mention the term in their body.
+        search_filter = title_filter | content_filter
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+        rank = case(
+            (func.lower(WikiPage.title) == term.lower(), 0),
+            (WikiPage.title.ilike(f"{term}%"), 1),
+            (title_filter, 2),
+            else_=3,
+        )
+        query = query.order_by(rank, desc(WikiPage.updated_at))
+    else:
+        query = query.order_by(desc(WikiPage.updated_at))
 
     offset = (page - 1) * page_size
     query = query.offset(offset).limit(page_size)

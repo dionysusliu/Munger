@@ -1,10 +1,16 @@
 """Application configuration using pydantic-settings."""
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+# Canonical env file: munger/.env (this file is munger/backend/app/core/config.py).
+# Resolved absolutely so local runs load it regardless of CWD; in Docker the path
+# is absent and pydantic falls back to the compose-injected environment variables.
+_ENV_FILE = str(Path(__file__).resolve().parents[3] / ".env")
 
 # Ollama-local embedding model ids — invalid when LLM_DEFAULT_PROVIDER=openrouter.
 OLLAMA_ONLY_EMBEDDING_MODELS = frozenset(
@@ -54,7 +60,16 @@ class Settings(BaseSettings):
     ingest_chunk_size_tokens: int = Field(default=600, alias="INGEST_CHUNK_SIZE_TOKENS")
     ingest_chunk_overlap_tokens: int = Field(default=100, alias="INGEST_CHUNK_OVERLAP_TOKENS")
     ingest_max_gleanings: int = Field(default=1, alias="INGEST_MAX_GLEANINGS")
-    ingest_chunk_worker_concurrency: int = Field(default=5, alias="INGEST_CHUNK_WORKER_CONCURRENCY")
+    ingest_chunk_worker_concurrency: int = Field(default=8, alias="INGEST_CHUNK_WORKER_CONCURRENCY")
+    ingest_wiki_worker_concurrency: int = Field(default=8, alias="INGEST_WIKI_WORKER_CONCURRENCY")
+    ingest_prefix_worker_concurrency: int = Field(default=8, alias="INGEST_PREFIX_WORKER_CONCURRENCY")
+    # Process-wide ceiling on concurrent outbound LLM/embedding requests. Bounds the sum of
+    # all per-stage concurrency so raised caps don't multiply into OpenRouter 429s.
+    llm_max_concurrency: int = Field(default=16, alias="LLM_MAX_CONCURRENCY")
+
+    # SQLAlchemy async engine pool (must exceed peak concurrent sessions across stages)
+    db_pool_size: int = Field(default=20, alias="MUNGER_DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=10, alias="MUNGER_DB_MAX_OVERFLOW")
 
     # PDF OCR (LiteParse + bundled Tesseract)
     tessdata_prefix: str = Field(default="/app/tessdata", alias="TESSDATA_PREFIX")
@@ -91,6 +106,14 @@ class Settings(BaseSettings):
     ingest_instructor_enabled: bool = Field(default=True, alias="INGEST_INSTRUCTOR_ENABLED")
     ingest_allow_null_embedding: bool = Field(default=False, alias="INGEST_ALLOW_NULL_EMBEDDING")
 
+    # Salience gate — only important entities get wiki pages (skip the expensive tail).
+    ingest_salience_min_mentions: int = Field(default=2, alias="INGEST_SALIENCE_MIN_MENTIONS")
+    ingest_salience_top_k: int = Field(default=200, alias="INGEST_SALIENCE_TOP_K")
+
+    # Co-mention linking thresholds — bound the "related" edge explosion.
+    ingest_link_min_cooccur: int = Field(default=2, alias="INGEST_LINK_MIN_COOCCUR")
+    ingest_link_max_degree: int = Field(default=15, alias="INGEST_LINK_MAX_DEGREE")
+
     # Cross-chunk linking tunables (plan §4)
     link_fuzzy_ratio: int = Field(default=90, alias="INGEST_LINK_FUZZY_RATIO")
     link_fuzzy_trgm: float = Field(default=0.45, alias="INGEST_LINK_TRGM")
@@ -118,8 +141,12 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE
         populate_by_name = True
+        # munger/.env also holds infra keys consumed by docker-compose substitution
+        # (e.g. MUNGER_POSTGRES_HOST) that are not Settings fields; ignore them rather
+        # than erroring when the file is loaded directly in a local run.
+        extra = "ignore"
 
     @model_validator(mode="after")
     def validate_openrouter_embedding_model(self) -> "Settings":

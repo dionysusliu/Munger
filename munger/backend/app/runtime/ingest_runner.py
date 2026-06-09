@@ -8,6 +8,7 @@ Branches on ``settings.ingest_orchestrator``:
 from __future__ import annotations
 
 import logging
+import time
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -148,13 +149,49 @@ class IngestRunner:
             payload={"status": "running", "thread_id": thread_id},
         )
 
+        # Accumulate streamed node updates into the final state so the run output is
+        # non-blank and the bottleneck is locatable: each node logs enter/exit timing
+        # and a `node_update` ingest event, so a stalled run's last event names the
+        # stuck node. `subgraphs=True` surfaces inner intake/cognify nodes, not just
+        # the two parent subgraph names.
+        final_state: dict = {"source_id": source_id, "job_id": job_id}
         try:
             with ingest_tracing_session(self.settings) as trace_cfg:
                 run_config = merge_tracing_config(config, trace_cfg)
-                await graph.ainvoke(
+                last_ts = time.monotonic()
+                async for namespace, update in graph.astream(
                     {"source_id": source_id, "job_id": job_id},
                     config=run_config,
-                )
+                    stream_mode="updates",
+                    subgraphs=True,
+                ):
+                    now = time.monotonic()
+                    elapsed_ms = int((now - last_ts) * 1000)
+                    last_ts = now
+                    ns_prefix = ":".join(str(n) for n in namespace) if namespace else ""
+                    for node_name, partial in (update or {}).items():
+                        label = f"{ns_prefix}/{node_name}" if ns_prefix else node_name
+                        keys = sorted(partial.keys()) if isinstance(partial, dict) else []
+                        logger.info(
+                            "ingest source=%s node=%s elapsed_ms=%d keys=%s",
+                            source_id,
+                            label,
+                            elapsed_ms,
+                            keys,
+                        )
+                        await record_ingest_event(
+                            source_id=source_id,
+                            job_id=job_id,
+                            event_type="node_update",
+                            payload={
+                                "node": label,
+                                "namespace": [str(n) for n in namespace],
+                                "elapsed_ms": elapsed_ms,
+                                "keys": keys,
+                            },
+                        )
+                        if isinstance(partial, dict):
+                            final_state.update(partial)
         except Exception as exc:
             message = f"Ingest graph failed: {exc or exc.__class__.__name__}"
             logger.exception("Ingest graph failed for source %s", source_id)
@@ -172,15 +209,16 @@ class IngestRunner:
                 "thread_id": thread_id,
             }
 
+        # Prefer the graph's own terminal status; fall back to the DB row.
         source = await get_source(source_id)
-        status = source.status if source else "unknown"
+        status = final_state.get("status") or (source.status if source else "unknown")
         await record_ingest_event(
             source_id=source_id,
             job_id=job_id,
             event_type="status_change",
             payload={"status": status},
         )
-        return {"source_id": source_id, "status": status, "thread_id": thread_id}
+        return {**final_state, "status": status, "thread_id": thread_id}
 
     # ------------------------------------------------------------------
     # Agent path (legacy LangChain agent + gating middleware)

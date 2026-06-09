@@ -28,6 +28,27 @@ async def chunks_needing_map(source_id: int) -> list[int]:
         return list(result.scalars().all())
 
 
+async def count_chunks_by_status(source_id: int) -> dict[str, int]:
+    """Return per-status chunk counts for a source (one GROUP BY query).
+
+    Keys: pending, running, done, failed, total. Used to expose live map progress.
+    """
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(Chunk.map_status, func.count())
+            .where(Chunk.source_id == source_id)
+            .group_by(Chunk.map_status)
+        )
+        counts = {row[0]: row[1] for row in result.all()}
+    return {
+        "pending": counts.get(MAP_PENDING, 0),
+        "running": counts.get(MAP_RUNNING, 0),
+        "done": counts.get(MAP_DONE, 0),
+        "failed": counts.get(MAP_FAILED, 0),
+        "total": sum(counts.values()),
+    }
+
+
 async def all_chunks_done(source_id: int) -> bool:
     async with async_session_maker() as session:
         result = await session.execute(

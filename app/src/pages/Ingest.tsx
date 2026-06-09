@@ -48,6 +48,8 @@ interface IngestJob {
   updatedAt?: string;
   currentStep?: IngestStatusResponse['current_step'];
   stepMetrics?: IngestStatusResponse['step_metrics'];
+  mapProgress?: IngestStatusResponse['map_progress'];
+  wikiProgress?: IngestStatusResponse['wiki_progress'];
 }
 
 interface QueueQuery {
@@ -86,6 +88,7 @@ const PIPELINE_STEPS = [
   { key: 'map_chunks', label: 'Mapping chunks' },
   { key: 'reduce_entities', label: 'Merging entities' },
   { key: 'link_entities', label: 'Linking entities' },
+  { key: 'select_entities', label: 'Selecting key entities' },
   { key: 'summarize_source', label: 'Writing summary' },
   { key: 'generate_wiki_pages', label: 'Creating wiki pages' },
   { key: 'link_wiki_pages', label: 'Linking pages' },
@@ -189,6 +192,8 @@ function applyStatusUpdate(job: IngestJob, payload: IngestStatusResponse): Inges
     updatedAt: payload.updated_at,
     currentStep: payload.current_step ?? job.currentStep,
     stepMetrics: payload.step_metrics ?? job.stepMetrics,
+    mapProgress: payload.map_progress ?? job.mapProgress,
+    wikiProgress: payload.wiki_progress ?? job.wikiProgress,
   };
 }
 
@@ -220,6 +225,8 @@ function PipelineProgress({ job }: { job: IngestJob }) {
   const activeIndex = job.currentStep?.index ?? (done.size + 1);
   const total = job.currentStep?.total ?? PIPELINE_STEPS.length;
   const metrics = job.stepMetrics ?? {};
+  const mapP = job.mapProgress;
+  const wikiP = job.wikiProgress;
 
   return (
     <div className="mb-3 space-y-2">
@@ -250,6 +257,19 @@ function PipelineProgress({ job }: { job: IngestJob }) {
               </div>
               {isFailed && failure && (
                 <p className="mt-1 text-mono-sm text-error">{failure.message}</p>
+              )}
+              {step.key === 'map_chunks' && mapP && mapP.total > 0 && (
+                <p className="mt-1 text-mono-sm text-text-secondary">
+                  Chunks: {mapP.done}/{mapP.total} done
+                  {mapP.running > 0 && ` · ${mapP.running} running`}
+                  {mapP.failed > 0 && ` · ${mapP.failed} failed`}
+                  {mapP.pending > 0 && ` · ${mapP.pending} pending`}
+                </p>
+              )}
+              {step.key === 'generate_wiki_pages' && wikiP && wikiP.total > 0 && (
+                <p className="mt-1 text-mono-sm text-text-secondary">
+                  Wiki: {wikiP.pages_done}/{wikiP.total} pages
+                </p>
               )}
             </div>
           );

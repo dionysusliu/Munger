@@ -16,25 +16,6 @@ logger = logging.getLogger(__name__)
 _initialized = False
 F = TypeVar("F", bound=Callable[..., Any])
 
-# Graph nodes registered on LangGraph StateGraph (not conditional-edge routers).
-INGEST_GRAPH_NODE_NAMES: frozenset[str] = frozenset(
-    {
-        "n_register",
-        "n_parse",
-        "n_hash_dedup",
-        "n_skip",
-        "n_chunk",
-        "n_process_chunk",
-        "n_map",
-        "n_map_gate",
-        "n_reduce",
-        "n_link",
-        "n_summarize",
-        "n_wiki",
-        "n_finalize",
-    }
-)
-
 
 def configure_langsmith(settings: Settings | None = None) -> bool:
     """Apply LangSmith env vars once at process startup. Returns True if active."""
@@ -126,67 +107,33 @@ def merge_tracing_config(base: dict[str, Any], extras: dict[str, Any]) -> dict[s
 
 @contextmanager
 def ingest_tracing_session(settings: Settings | None = None) -> Iterator[dict[str, Any]]:
-    """Attach LangChainTracer callbacks for one ingest graph run.
+    """Activate one shared LangSmith run-tree for an ingest run.
 
-    Project routing uses LANGSMITH_PROJECT / LANGCHAIN_PROJECT from configure_langsmith().
-    LangGraph creates the nested node tree; avoid duplicate @traceable wrappers on nodes.
+    Single source of truth: env-based auto-tracing (set by ``configure_langsmith``)
+    makes LangGraph emit the full node tree, and ``langsmith.tracing_context`` makes
+    ``@traceable`` LLM calls nest under the same run-tree instead of orphaning into
+    separate root traces. No manual ``LangChainTracer`` callback is attached — mixing
+    the callback tracer with contextvar ``@traceable`` is what previously left the
+    graph trace hollow. Yields an empty extras dict (nothing to merge into config).
     """
     if settings is None:
         from app.core.config import get_settings
 
         settings = get_settings()
 
-    extras: dict[str, Any] = {}
     if not is_tracing_enabled():
-        yield extras
+        yield {}
         return
 
     try:
-        from langchain_core.tracers.langchain import LangChainTracer
+        from langsmith.run_helpers import tracing_context
     except ImportError as exc:
         logger.warning("LangSmith tracing dependencies unavailable: %s", exc)
-        yield extras
+        yield {}
         return
 
-    extras["callbacks"] = [LangChainTracer(project_name=settings.langsmith_project)]
-    yield extras
-
-
-def trace_graph_node(*, name: str, run_type: str = "chain") -> Callable[[F], F]:
-    """Decorator for LangGraph node functions (custom Python, not LangChain runnables)."""
-
-    def decorator(func: F) -> F:
-        traced: F | None = None
-
-        @functools.wraps(func)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            nonlocal traced
-            if not is_tracing_enabled():
-                return await func(*args, **kwargs)
-            if traced is None:
-                try:
-                    from langsmith import traceable
-
-                    traced = traceable(name=name, run_type=run_type)(func)  # type: ignore[assignment]
-                except ImportError:
-                    logger.warning("langsmith package missing; cannot trace node %s", name)
-                    return await func(*args, **kwargs)
-            return await traced(*args, **kwargs)  # type: ignore[misc]
-
-        return async_wrapper  # type: ignore[return-value]
-
-    return decorator
-
-
-def wrap_graph_nodes(nodes: dict[str, Any], *, names: frozenset[str] | None = None) -> dict[str, Any]:
-    """Apply trace_graph_node to selected graph node callables."""
-    selected = names or INGEST_GRAPH_NODE_NAMES
-    wrapped = dict(nodes)
-    for key in selected:
-        fn = wrapped.get(key)
-        if callable(fn):
-            wrapped[key] = trace_graph_node(name=key)(fn)
-    return wrapped
+    with tracing_context(enabled=True, project_name=settings.langsmith_project):
+        yield {}
 
 
 def trace_llm(*, name: str, run_type: str = "llm") -> Callable[[F], F]:

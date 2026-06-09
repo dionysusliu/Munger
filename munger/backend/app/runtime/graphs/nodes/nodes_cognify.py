@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from types import SimpleNamespace
 
 from langgraph.types import Send
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app.runtime.errors import MapIncompleteError
 from app.services.chunk_map_status import (
     all_chunks_done,
@@ -18,10 +20,12 @@ from app.core.database import async_session_maker
 from app.models.chunk import Chunk
 from app.models.entity import Entity, EntityMention
 from app.models.source import Source
+from app.models.wiki import WikiPage
 from app.runtime.context import RuntimeServices
 from app.runtime.db_helpers import fail_source, get_source, log_ingestion, update_source_status
 from app.runtime.pipeline_events import emit_pipeline_summary, pipeline_step
 from app.runtime.state import EntityRef
+from app.services.salience import select_salient_entities
 from app.schemas.wiki import WikiPageCreate
 
 logger = logging.getLogger(__name__)
@@ -175,6 +179,48 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         return {"link_metrics": stats}
 
     # ------------------------------------------------------------------
+    # n_select  (salience gate)
+    # ------------------------------------------------------------------
+
+    async def n_select(state: dict) -> dict:
+        """Pick the salient entities for this source; the expensive wiki tail only
+        processes these. Scores by per-source mention count + distinct-chunk spread."""
+        source_id: int = state["source_id"]
+        job_id: int | None = state.get("job_id")
+
+        async with pipeline_step(
+            source_id=source_id, job_id=job_id, step_key="select_entities"
+        ) as metrics:
+            async with async_session_maker() as session:
+                rows = (
+                    await session.execute(
+                        select(
+                            EntityMention.entity_id,
+                            func.count().label("mentions"),
+                            func.count(func.distinct(EntityMention.chunk_id)).label("spread"),
+                        )
+                        .where(EntityMention.source_id == source_id)
+                        .group_by(EntityMention.entity_id)
+                    )
+                ).all()
+            meta = [
+                SimpleNamespace(id=r.entity_id, mentions=r.mentions, spread=r.spread or 0)
+                for r in rows
+            ]
+            selected = select_salient_entities(
+                meta,
+                min_mentions=services.settings.ingest_salience_min_mentions,
+                top_k=services.settings.ingest_salience_top_k,
+            )
+            metrics["entities_total"] = len(meta)
+            metrics["entities_selected"] = len(selected)
+
+        return {
+            "selected_entity_ids": sorted(selected),
+            "select_metrics": {"total": len(meta), "selected": len(selected)},
+        }
+
+    # ------------------------------------------------------------------
     # n_summarize
     # ------------------------------------------------------------------
 
@@ -223,6 +269,13 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
             updated = 0
             summary_page_id: int | None = None
 
+            # Idempotency: drop any pages from a prior run/retry of this source before
+            # regenerating, so re-ingests replace rather than accumulate -N duplicates.
+            if services.wiki:
+                removed = await services.wiki.delete_pages_for_source(source_id)
+                if removed:
+                    m["pages_removed"] = removed
+
             if source and services.wiki and services.llm:
                 text = source.content_text or ""
                 summary = source.content_summary or ""
@@ -236,6 +289,25 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
                         )
                     ).all()
 
+                # Salience gate: only generate pages for entities the select node kept
+                # (skip the expensive per-entity LLM work for the long tail). Empty set
+                # means the gate didn't run → fall back to all entities.
+                selected_ids = set(state.get("selected_entity_ids") or [])
+
+                # One page per entity: an entity may have several mentions; keep the
+                # first. Avoids duplicate pages and makes the per-entity work independent
+                # so it can run concurrently.
+                seen_entities: set[int] = set()
+                unique_rows: list[tuple] = []
+                for mention, entity in rows:
+                    if selected_ids and entity.id not in selected_ids:
+                        continue
+                    if entity.id in seen_entities:
+                        continue
+                    seen_entities.add(entity.id)
+                    unique_rows.append((mention, entity))
+
+                # Summary page first — it is the link target for every entity page.
                 try:
                     page_content = summary or text[:5000]
                     wiki_content = await services.llm.generate_wiki_page(
@@ -257,20 +329,25 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
                 except Exception as exc:
                     logger.warning("Summary wiki page failed for %s: %s", source_id, exc)
 
-                for mention, entity in rows:
+                # Per-entity pages are independent (own wiki_page row + own DB session in
+                # WikiService) → generate concurrently under a bounded semaphore. The LLM
+                # generation, the dominant cost, was previously fully serial.
+                sem = asyncio.Semaphore(services.settings.ingest_wiki_worker_concurrency)
+
+                async def _make_entity_page(mention, entity) -> str:
                     excerpt = _excerpt_from_mention(text, mention)
                     citation = f"> {excerpt[:500]}\n\n" if excerpt else ""
-                    try:
-                        body = await services.llm.generate_wiki_page(
-                            title=entity.name,
-                            content=excerpt or entity.description or entity.name,
-                            page_type=entity.entity_type,
-                        )
-                        content = f"{citation}{body}"
-                        if entity.wiki_page_id:
-                            await services.wiki.update_page(entity.wiki_page_id, content=content)
-                            updated += 1
-                        else:
+                    async with sem:
+                        try:
+                            body = await services.llm.generate_wiki_page(
+                                title=entity.name,
+                                content=excerpt or entity.description or entity.name,
+                                page_type=entity.entity_type,
+                            )
+                            content = f"{citation}{body}"
+                            if entity.wiki_page_id:
+                                await services.wiki.update_page(entity.wiki_page_id, content=content)
+                                return "updated"
                             page = await services.wiki.create_page(
                                 WikiPageCreate(
                                     title=entity.name,
@@ -282,7 +359,6 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
                             )
                             if services.entity:
                                 await services.entity.update_entity_wiki_page(entity.id, page.id)
-                            created += 1
                             if summary_page_id:
                                 await services.wiki.create_link(
                                     from_id=summary_page_id,
@@ -290,8 +366,16 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
                                     link_type="reference",
                                     context=f"Entity from {source.title}",
                                 )
-                    except Exception as exc:
-                        logger.warning("Wiki page failed for %s: %s", entity.name, exc)
+                            return "created"
+                        except Exception as exc:
+                            logger.warning("Wiki page failed for %s: %s", entity.name, exc)
+                            return "error"
+
+                outcomes = await asyncio.gather(
+                    *[_make_entity_page(mention, entity) for mention, entity in unique_rows]
+                )
+                created += sum(1 for o in outcomes if o == "created")
+                updated += sum(1 for o in outcomes if o == "updated")
 
             m["pages_created"] = created
             m["pages_updated"] = updated
@@ -302,26 +386,50 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
             source_id=source_id, job_id=job_id, step_key="link_wiki_pages"
         ) as m:
             entities = await _entities_for_source(source_id)
+            linked = [e for e in entities if e.get("wiki_page_id")]
             links = 0
-            if services.wiki:
-                for entity in entities:
-                    if not entity.get("wiki_page_id"):
+            if services.wiki and linked:
+                # Fetch every page's content ONCE (was an O(n^2) get_page DB call per
+                # entity pair). Then scan in-memory and batch-create the links.
+                page_ids = [e["wiki_page_id"] for e in linked]
+                async with async_session_maker() as session:
+                    prows = (
+                        await session.execute(
+                            select(WikiPage.id, WikiPage.content).where(WikiPage.id.in_(page_ids))
+                        )
+                    ).all()
+                content_by_page = {pid: (content or "") for pid, content in prows}
+                # Precompile each entity-name pattern once.
+                patterns = [
+                    (e, re.compile(re.escape(e["name"]), re.IGNORECASE)) for e in linked
+                ]
+                link_pairs: list[tuple[int, int]] = []
+                for entity in linked:
+                    content = content_by_page.get(entity["wiki_page_id"], "")
+                    if not content:
                         continue
-                    for other in entities:
-                        if other["id"] == entity["id"] or not other.get("wiki_page_id"):
+                    for other, pattern in patterns:
+                        if other["id"] == entity["id"]:
                             continue
-                        pattern = re.compile(re.escape(other["name"]), re.IGNORECASE)
-                        page = await services.wiki.get_page(entity["wiki_page_id"])
-                        if page and pattern.search(page.content):
-                            try:
-                                await services.wiki.create_link(
-                                    from_id=entity["wiki_page_id"],
-                                    to_id=other["wiki_page_id"],
-                                    link_type="related",
-                                )
-                                links += 1
-                            except Exception:
-                                pass
+                        if pattern.search(content):
+                            link_pairs.append((entity["wiki_page_id"], other["wiki_page_id"]))
+
+                sem = asyncio.Semaphore(services.settings.ingest_wiki_worker_concurrency)
+
+                async def _create_link(from_id: int, to_id: int) -> int:
+                    async with sem:
+                        try:
+                            await services.wiki.create_link(
+                                from_id=from_id, to_id=to_id, link_type="related"
+                            )
+                            return 1
+                        except Exception:
+                            return 0
+
+                results = await asyncio.gather(
+                    *[_create_link(f, t) for f, t in link_pairs]
+                )
+                links = sum(results)
             m["links_created"] = links
             wiki_metrics.update(m)
 
@@ -377,6 +485,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         "route_after_map_gate_service": route_after_map_gate_service,
         "n_reduce": n_reduce,
         "n_link": n_link,
+        "n_select": n_select,
         "n_summarize": n_summarize,
         "n_wiki": n_wiki,
         "n_finalize": n_finalize,
@@ -406,7 +515,40 @@ async def _entities_for_source(source_id: int) -> list[EntityRef]:
         ]
 
 
-def _excerpt_from_mention(source_text: str, mention: EntityMention) -> str:
-    if mention.char_start is not None and mention.char_end is not None:
-        return source_text[mention.char_start: mention.char_end]
-    return mention.context or ""
+_WS_RE = re.compile(r"\s+")
+_SENT_BOUNDARY_RE = re.compile(r"[.!?]\s")
+
+
+def _clean_ws(text: str) -> str:
+    """Collapse runs of whitespace (PDF extraction mangles spacing)."""
+    return _WS_RE.sub(" ", text or "").strip()
+
+
+def _excerpt_from_mention(source_text: str, mention: EntityMention, *, window: int = 200) -> str:
+    """Return a readable sentence window around the mention span.
+
+    The raw ``[char_start, char_end]`` span is just the entity surface form (a few
+    chars), which makes a useless ``> Foo`` citation. Expand to the surrounding
+    sentence (bounded by ``window`` chars), snapping to sentence terminators, and
+    collapse mangled whitespace. Fall back to ``mention.context`` when offsets are
+    missing or out of range.
+    """
+    start = getattr(mention, "char_start", None)
+    end = getattr(mention, "char_end", None)
+    n = len(source_text)
+    if start is None or end is None or not (0 <= start < end <= n):
+        return _clean_ws(getattr(mention, "context", "") or "")
+
+    lo = max(0, start - window)
+    hi = min(n, end + window)
+    # Snap left to the start of the sentence containing the span.
+    left = source_text[lo:start]
+    boundaries = list(_SENT_BOUNDARY_RE.finditer(left))
+    if boundaries:
+        lo += boundaries[-1].end()
+    # Snap right to the end of that sentence.
+    right = source_text[end:hi]
+    m = _SENT_BOUNDARY_RE.search(right)
+    if m:
+        hi = end + m.end()
+    return _clean_ws(source_text[lo:hi])

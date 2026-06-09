@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -166,13 +167,20 @@ class ChunkService:
 
             await session.execute(delete(Chunk).where(Chunk.source_id == source_id))
 
-            embed_inputs: list[str] = []
-            prefixes: list[str] = []
-            for seg in segments:
-                prefix = await self._contextual_prefix(text, seg.content)
-                prefixes.append(prefix)
-                body = f"{prefix}\n\n{seg.content}" if prefix else seg.content
-                embed_inputs.append(body)
+            # Contextual prefixes are independent per segment — generate them
+            # concurrently (bounded) instead of one blocking LLM call at a time.
+            # gather preserves input order, so prefixes[i] still maps to segments[i].
+            sem = asyncio.Semaphore(self.settings.ingest_prefix_worker_concurrency)
+
+            async def _prefix(seg) -> str:
+                async with sem:
+                    return await self._contextual_prefix(text, seg.content)
+
+            prefixes: list[str] = await asyncio.gather(*[_prefix(seg) for seg in segments])
+            embed_inputs: list[str] = [
+                f"{prefixes[i]}\n\n{seg.content}" if prefixes[i] else seg.content
+                for i, seg in enumerate(segments)
+            ]
 
             embeddings: list[list[float]] = []
             if self.llm and embed_inputs:

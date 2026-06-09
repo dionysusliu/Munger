@@ -17,6 +17,7 @@ STEP_LABELS: dict[str, str] = {
     "map_chunks": "Mapping chunks",
     "reduce_entities": "Merging entities",
     "link_entities": "Linking entities",
+    "select_entities": "Selecting key entities",
     "summarize_source": "Writing summary",
     "generate_wiki_pages": "Creating wiki pages",
     "link_wiki_pages": "Linking pages",
@@ -27,7 +28,7 @@ STEP_LABELS: dict[str, str] = {
     "resolve_entities": "Matching entities",
 }
 
-# Canonical order for graph subgraph orchestration (11 steps).
+# Canonical order for graph subgraph orchestration (12 steps).
 # Used as the primary step registry; replaces INGEST_TOOL_ORDER for new runs.
 GRAPH_STEP_ORDER: list[str] = [
     "register_source",
@@ -37,6 +38,7 @@ GRAPH_STEP_ORDER: list[str] = [
     "map_chunks",
     "reduce_entities",
     "link_entities",
+    "select_entities",
     "summarize_source",
     "generate_wiki_pages",
     "link_wiki_pages",

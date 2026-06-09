@@ -4,11 +4,12 @@ import logging
 import re
 from datetime import datetime
 
-from sqlalchemy import select, func, and_, or_, desc
+from sqlalchemy import select, func, and_, or_, desc, case, delete, update
 from sqlalchemy.orm import selectinload
 
 from app.core.database import async_session_maker
 from app.models.wiki import WikiPage, WikiLink
+from app.models.entity import Entity
 from app.models.log import IngestionLog
 from app.schemas.wiki import WikiPageCreate, WikiPageResponse, WikiPageList, WikiLinkResponse
 
@@ -149,6 +150,50 @@ class WikiService:
             logger.info(f"Deleted wiki page: {page.title} (id={page_id})")
             return True
 
+    async def delete_pages_for_source(self, source_id: int) -> int:
+        """Delete all wiki pages (and their links) for a source; clear entity refs.
+
+        Makes wiki generation idempotent: a re-ingest/retry replaces the source's
+        pages instead of appending a fresh slug-uniquified set (the cause of the
+        duplicate-page accumulation). Returns the number of pages removed.
+        """
+        async with async_session_maker() as session:
+            pages = (
+                await session.execute(
+                    select(WikiPage).where(WikiPage.source_id == source_id)
+                )
+            ).scalars().all()
+            if not pages:
+                return 0
+            page_ids = [p.id for p in pages]
+            # Clear entity references to these pages.
+            await session.execute(
+                update(Entity)
+                .where(Entity.wiki_page_id.in_(page_ids))
+                .values(wiki_page_id=None)
+            )
+            # Remove links touching these pages (FK), then the pages.
+            await session.execute(
+                delete(WikiLink).where(
+                    or_(
+                        WikiLink.from_page_id.in_(page_ids),
+                        WikiLink.to_page_id.in_(page_ids),
+                    )
+                )
+            )
+            await session.execute(delete(WikiPage).where(WikiPage.id.in_(page_ids)))
+            await session.commit()
+
+        if self.storage_service:
+            for page in pages:
+                try:
+                    await self.storage_service.delete_wiki_page(page.slug, page.page_type)
+                except Exception as exc:
+                    logger.warning("Failed to delete wiki page file %s: %s", page.slug, exc)
+
+        logger.info("Deleted %s wiki pages for source %s", len(pages), source_id)
+        return len(pages)
+
     async def list_pages(
         self,
         page_type: str | None = None,
@@ -162,22 +207,31 @@ class WikiService:
             count_query = select(func.count(WikiPage.id))
 
             filters = []
+            rank = None
             if page_type:
                 filters.append(WikiPage.page_type == page_type)
             if search:
-                search_term = f"%{search}%"
-                filters.append(
-                    or_(
-                        WikiPage.title.ilike(search_term),
-                        WikiPage.content.ilike(search_term),
-                    )
+                term = search.strip()
+                search_term = f"%{term}%"
+                title_filter = WikiPage.title.ilike(search_term)
+                # Match title OR content, ranked by title-match closeness:
+                # exact title, title prefix, title substring, content-only.
+                filters.append(or_(title_filter, WikiPage.content.ilike(search_term)))
+                rank = case(
+                    (func.lower(WikiPage.title) == term.lower(), 0),
+                    (WikiPage.title.ilike(f"{term}%"), 1),
+                    (title_filter, 2),
+                    else_=3,
                 )
 
             if filters:
                 query = query.where(and_(*filters))
                 count_query = count_query.where(and_(*filters))
 
-            query = query.order_by(desc(WikiPage.updated_at))
+            if rank is not None:
+                query = query.order_by(rank, desc(WikiPage.updated_at))
+            else:
+                query = query.order_by(desc(WikiPage.updated_at))
             query = query.offset((page - 1) * page_size).limit(page_size)
 
             result = await session.execute(query)
