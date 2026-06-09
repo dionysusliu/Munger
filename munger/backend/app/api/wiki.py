@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func, desc, asc
+from sqlalchemy import select, func, desc, asc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,14 +55,20 @@ async def list_wiki_pages(
 
     if search:
         search_pattern = f"%{search}%"
-        query = query.where(
-            WikiPage.title.ilike(search_pattern) | WikiPage.content.ilike(search_pattern)
-        )
-        count_query = count_query.where(
-            WikiPage.title.ilike(search_pattern) | WikiPage.content.ilike(search_pattern)
-        )
+        title_filter = WikiPage.title.ilike(search_pattern)
+        content_filter = WikiPage.content.ilike(search_pattern)
 
-    query = query.order_by(desc(WikiPage.updated_at))
+        # Match on title OR content, but rank title matches first so a search
+        # term that appears in a page title always surfaces above pages that
+        # only mention it in their body.
+        search_filter = title_filter | content_filter
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+        title_rank = case((title_filter, 0), else_=1)
+        query = query.order_by(title_rank, desc(WikiPage.updated_at))
+    else:
+        query = query.order_by(desc(WikiPage.updated_at))
 
     offset = (page - 1) * page_size
     query = query.offset(offset).limit(page_size)

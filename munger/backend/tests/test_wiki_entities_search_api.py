@@ -50,6 +50,84 @@ def test_wiki_crud_links_and_related(client, create_wiki_link):
     assert delete.status_code == 204
 
 
+def test_wiki_list_pagination(client):
+    for i in range(7):
+        resp = client.post(
+            "/api/wiki",
+            json={
+                "title": f"Paginated Page {i:02d}",
+                "slug": f"paginated-page-{i:02d}",
+                "content": f"body number {i}",
+                "page_type": "summary",
+            },
+        )
+        assert resp.status_code == 201
+
+    first = client.get("/api/wiki", params={"page": 1, "page_size": 3})
+    assert first.status_code == 200
+    body = first.json()
+    assert body["total"] == 7
+    assert body["page"] == 1
+    assert body["page_size"] == 3
+    assert len(body["items"]) == 3
+
+    second = client.get("/api/wiki", params={"page": 2, "page_size": 3})
+    assert len(second.json()["items"]) == 3
+
+    third = client.get("/api/wiki", params={"page": 3, "page_size": 3})
+    assert len(third.json()["items"]) == 1
+
+    # No overlap between pages.
+    first_ids = {p["id"] for p in body["items"]}
+    second_ids = {p["id"] for p in second.json()["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_wiki_search_ranks_title_matches_first(client):
+    # "needle" appears in one title, and in the content of a different page.
+    titled = client.post(
+        "/api/wiki",
+        json={
+            "title": "Needle In Title",
+            "slug": "needle-in-title",
+            "content": "unrelated body text",
+            "page_type": "summary",
+        },
+    ).json()
+    content_only = client.post(
+        "/api/wiki",
+        json={
+            "title": "Plain Heading",
+            "slug": "plain-heading",
+            "content": "this body mentions a needle somewhere",
+            "page_type": "summary",
+        },
+    ).json()
+
+    # Both pages match, but the title match must rank first.
+    hit = client.get("/api/wiki", params={"search": "needle"})
+    assert hit.status_code == 200
+    body = hit.json()
+    assert body["total"] == 2
+    assert [item["id"] for item in body["items"]] == [titled["id"], content_only["id"]]
+
+    # Title ranking survives pagination: the title match is the only first-page result.
+    page1 = client.get("/api/wiki", params={"search": "needle", "page": 1, "page_size": 1})
+    assert [item["id"] for item in page1.json()["items"]] == [titled["id"]]
+    page2 = client.get("/api/wiki", params={"search": "needle", "page": 2, "page_size": 1})
+    assert [item["id"] for item in page2.json()["items"]] == [content_only["id"]]
+
+    # Content-only term still matches via full-text search.
+    content_hit = client.get("/api/wiki", params={"search": "somewhere"})
+    content_body = content_hit.json()
+    assert content_body["total"] == 1
+    assert content_body["items"][0]["slug"] == "plain-heading"
+
+    # No match anywhere.
+    miss = client.get("/api/wiki", params={"search": "zzznomatch"})
+    assert miss.json()["total"] == 0
+
+
 def test_entities_endpoints_cover_list_get_mentions_related_and_update(
     client,
     create_source,

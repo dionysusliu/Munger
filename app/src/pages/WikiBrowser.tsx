@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Search, FileText, Loader2 } from 'lucide-react';
+import { Search, FileText, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { listWikiPages, type WikiPageResponse } from '@/lib/api';
+
+const PAGE_SIZE = 24;
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -16,11 +18,15 @@ export default function WikiBrowser() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialSearch = searchParams.get('search') || '';
+  const pageParam = parseInt(searchParams.get('page') || '1', 10);
+  const currentPage = Number.isNaN(pageParam) || pageParam < 1 ? 1 : pageParam;
   const [search, setSearch] = useState(initialSearch);
   const [pages, setPages] = useState<WikiPageResponse[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   useEffect(() => {
     setSearch(initialSearch);
@@ -35,7 +41,8 @@ export default function WikiBrowser() {
       try {
         const response = await listWikiPages({
           search: initialSearch || undefined,
-          page_size: 50,
+          page: currentPage,
+          page_size: PAGE_SIZE,
         });
         if (!cancelled) {
           setPages(response.items);
@@ -56,16 +63,37 @@ export default function WikiBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [initialSearch]);
+  }, [initialSearch, currentPage]);
+
+  // Build the next URL query, preserving search while changing the page.
+  const setQuery = (next: { search?: string; page?: number }) => {
+    const params: Record<string, string> = {};
+    const nextSearch = next.search !== undefined ? next.search : initialSearch;
+    const nextPage = next.page !== undefined ? next.page : currentPage;
+    if (nextSearch) params.search = nextSearch;
+    if (nextPage > 1) params.page = String(nextPage);
+    setSearchParams(params);
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (search.trim()) {
-      setSearchParams({ search: search.trim() });
-    } else {
-      setSearchParams({});
-    }
+    // Reset to first page whenever a new search is submitted.
+    setQuery({ search: search.trim(), page: 1 });
   };
+
+  const goToPage = (target: number) => {
+    const clamped = Math.min(Math.max(1, target), totalPages);
+    setQuery({ page: clamped });
+  };
+
+  // Compute a compact window of page numbers around the current page.
+  const pageNumbers = useMemo(() => {
+    const windowSize = 5;
+    let start = Math.max(1, currentPage - Math.floor(windowSize / 2));
+    const end = Math.min(totalPages, start + windowSize - 1);
+    start = Math.max(1, end - windowSize + 1);
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, [currentPage, totalPages]);
 
   return (
     <div className="min-h-full p-6 md:p-8">
@@ -119,7 +147,8 @@ export default function WikiBrowser() {
         ) : (
           <>
             <div className="border-b border-amber-800/10 px-4 py-3 text-mono-sm text-text-muted">
-              {total} page{total !== 1 ? 's' : ''}
+              {total} page{total !== 1 ? 's' : ''} · showing{' '}
+              {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, total)}
             </div>
             <div className="divide-y divide-amber-800/10">
               {pages.map((page) => (
@@ -139,6 +168,50 @@ export default function WikiBrowser() {
                 </button>
               ))}
             </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-1 border-t border-amber-800/10 px-4 py-4">
+                <button
+                  type="button"
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage <= 1}
+                  aria-label="Previous page"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                {pageNumbers[0] > 1 && (
+                  <span className="px-1 text-mono-sm text-text-muted">…</span>
+                )}
+                {pageNumbers.map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => goToPage(num)}
+                    aria-current={num === currentPage ? 'page' : undefined}
+                    className={`h-9 min-w-9 rounded-lg px-3 text-body-sm font-medium transition-colors ${
+                      num === currentPage
+                        ? 'bg-amber-500 text-text-inverse'
+                        : 'text-text-secondary hover:bg-bg-hover'
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+                {pageNumbers[pageNumbers.length - 1] < totalPages && (
+                  <span className="px-1 text-mono-sm text-text-muted">…</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage >= totalPages}
+                  aria-label="Next page"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </>
         )}
       </motion.div>

@@ -4,7 +4,7 @@ import logging
 import re
 from datetime import datetime
 
-from sqlalchemy import select, func, and_, or_, desc
+from sqlalchemy import select, func, and_, or_, desc, case
 from sqlalchemy.orm import selectinload
 
 from app.core.database import async_session_maker
@@ -162,22 +162,25 @@ class WikiService:
             count_query = select(func.count(WikiPage.id))
 
             filters = []
+            title_filter = None
             if page_type:
                 filters.append(WikiPage.page_type == page_type)
             if search:
                 search_term = f"%{search}%"
-                filters.append(
-                    or_(
-                        WikiPage.title.ilike(search_term),
-                        WikiPage.content.ilike(search_term),
-                    )
-                )
+                title_filter = WikiPage.title.ilike(search_term)
+                # Match title OR content, but rank title matches first.
+                filters.append(or_(title_filter, WikiPage.content.ilike(search_term)))
 
             if filters:
                 query = query.where(and_(*filters))
                 count_query = count_query.where(and_(*filters))
 
-            query = query.order_by(desc(WikiPage.updated_at))
+            if title_filter is not None:
+                query = query.order_by(
+                    case((title_filter, 0), else_=1), desc(WikiPage.updated_at)
+                )
+            else:
+                query = query.order_by(desc(WikiPage.updated_at))
             query = query.offset((page - 1) * page_size).limit(page_size)
 
             result = await session.execute(query)
