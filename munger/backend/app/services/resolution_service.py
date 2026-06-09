@@ -16,6 +16,7 @@ from app.models.entity import Entity, EntityMention
 from app.models.source import Source
 from app.models.entity_relationship import EntityRelationship
 from app.services.entity_service import EntityService
+from app.services.entity_hygiene import is_low_value_entity_name
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,9 @@ class ResolutionService:
             for raw, chunk in raw_instances:
                 name = (raw.get("name") or "").strip()
                 etype = (raw.get("type") or "concept").lower().strip()
-                if not name:
+                if not name or is_low_value_entity_name(name):
+                    # Drop obvious non-entities (numbers, trace labels) at materialization
+                    # so they never become entities/mentions/pages/links.
                     continue
                 etype = self.entity_service._normalize_entity_type(etype)
                 key = (name.lower(), etype)
