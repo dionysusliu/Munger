@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     ingest_instructor_enabled: bool = Field(default=True, alias="INGEST_INSTRUCTOR_ENABLED")
     ingest_allow_null_embedding: bool = Field(default=False, alias="INGEST_ALLOW_NULL_EMBEDDING")
 
+    # Salience gate — only important entities get wiki pages (skip the expensive tail).
+    ingest_salience_min_mentions: int = Field(default=2, alias="INGEST_SALIENCE_MIN_MENTIONS")
+    ingest_salience_top_k: int = Field(default=200, alias="INGEST_SALIENCE_TOP_K")
+
     # Co-mention linking thresholds — bound the "related" edge explosion.
     ingest_link_min_cooccur: int = Field(default=2, alias="INGEST_LINK_MIN_COOCCUR")
     ingest_link_max_degree: int = Field(default=15, alias="INGEST_LINK_MAX_DEGREE")

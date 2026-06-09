@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from types import SimpleNamespace
 
 from langgraph.types import Send
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app.runtime.errors import MapIncompleteError
 from app.services.chunk_map_status import (
     all_chunks_done,
@@ -24,6 +25,7 @@ from app.runtime.context import RuntimeServices
 from app.runtime.db_helpers import fail_source, get_source, log_ingestion, update_source_status
 from app.runtime.pipeline_events import emit_pipeline_summary, pipeline_step
 from app.runtime.state import EntityRef
+from app.services.salience import select_salient_entities
 from app.schemas.wiki import WikiPageCreate
 
 logger = logging.getLogger(__name__)
@@ -177,6 +179,48 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         return {"link_metrics": stats}
 
     # ------------------------------------------------------------------
+    # n_select  (salience gate)
+    # ------------------------------------------------------------------
+
+    async def n_select(state: dict) -> dict:
+        """Pick the salient entities for this source; the expensive wiki tail only
+        processes these. Scores by per-source mention count + distinct-chunk spread."""
+        source_id: int = state["source_id"]
+        job_id: int | None = state.get("job_id")
+
+        async with pipeline_step(
+            source_id=source_id, job_id=job_id, step_key="select_entities"
+        ) as metrics:
+            async with async_session_maker() as session:
+                rows = (
+                    await session.execute(
+                        select(
+                            EntityMention.entity_id,
+                            func.count().label("mentions"),
+                            func.count(func.distinct(EntityMention.chunk_id)).label("spread"),
+                        )
+                        .where(EntityMention.source_id == source_id)
+                        .group_by(EntityMention.entity_id)
+                    )
+                ).all()
+            meta = [
+                SimpleNamespace(id=r.entity_id, mentions=r.mentions, spread=r.spread or 0)
+                for r in rows
+            ]
+            selected = select_salient_entities(
+                meta,
+                min_mentions=services.settings.ingest_salience_min_mentions,
+                top_k=services.settings.ingest_salience_top_k,
+            )
+            metrics["entities_total"] = len(meta)
+            metrics["entities_selected"] = len(selected)
+
+        return {
+            "selected_entity_ids": sorted(selected),
+            "select_metrics": {"total": len(meta), "selected": len(selected)},
+        }
+
+    # ------------------------------------------------------------------
     # n_summarize
     # ------------------------------------------------------------------
 
@@ -245,12 +289,19 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
                         )
                     ).all()
 
+                # Salience gate: only generate pages for entities the select node kept
+                # (skip the expensive per-entity LLM work for the long tail). Empty set
+                # means the gate didn't run → fall back to all entities.
+                selected_ids = set(state.get("selected_entity_ids") or [])
+
                 # One page per entity: an entity may have several mentions; keep the
                 # first. Avoids duplicate pages and makes the per-entity work independent
                 # so it can run concurrently.
                 seen_entities: set[int] = set()
                 unique_rows: list[tuple] = []
                 for mention, entity in rows:
+                    if selected_ids and entity.id not in selected_ids:
+                        continue
                     if entity.id in seen_entities:
                         continue
                     seen_entities.add(entity.id)
@@ -434,6 +485,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         "route_after_map_gate_service": route_after_map_gate_service,
         "n_reduce": n_reduce,
         "n_link": n_link,
+        "n_select": n_select,
         "n_summarize": n_summarize,
         "n_wiki": n_wiki,
         "n_finalize": n_finalize,

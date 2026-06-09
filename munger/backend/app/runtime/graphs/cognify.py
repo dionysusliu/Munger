@@ -34,6 +34,7 @@ def build_cognify_subgraph(services: RuntimeServices):
     graph.add_node("n_chunk", nodes["n_chunk"])
     graph.add_node("n_reduce", nodes["n_reduce"])
     graph.add_node("n_link", nodes["n_link"])
+    graph.add_node("n_select", nodes["n_select"])
     graph.add_node("n_summarize", nodes["n_summarize"])
     graph.add_node("n_wiki", nodes["n_wiki"])
     graph.add_node("n_finalize", nodes["n_finalize"])
@@ -68,7 +69,8 @@ def build_cognify_subgraph(services: RuntimeServices):
         )
 
     graph.add_edge("n_reduce", "n_link")
-    graph.add_edge("n_link", "n_summarize")
+    graph.add_edge("n_link", "n_select")
+    graph.add_edge("n_select", "n_summarize")
     graph.add_edge("n_summarize", "n_wiki")
     graph.add_edge("n_wiki", "n_finalize")
     graph.add_edge("n_finalize", END)
