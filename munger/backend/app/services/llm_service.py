@@ -1,10 +1,11 @@
 """LLM service with multi-provider abstraction for OpenAI, Anthropic, Ollama, OpenRouter, and Kimi."""
 
+import asyncio
 import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -12,6 +13,22 @@ from app.core.config import OLLAMA_ONLY_EMBEDDING_MODELS, Settings
 from app.observability.langsmith_setup import trace_llm
 
 logger = logging.getLogger(__name__)
+
+# Process-wide cap on concurrent outbound LLM/embedding requests. Shared across every
+# LLMService instance (the worker runs several ingest jobs in one event loop), so the
+# raised per-stage concurrency knobs cannot multiply into OpenRouter rate-limit errors.
+# Created lazily inside the running loop; only the lowest-level outbound calls acquire it
+# (chat / embed_texts / instructor path) so there is no re-entrant double-acquire.
+_GLOBAL_LLM_SEMAPHORE: asyncio.Semaphore | None = None
+_GLOBAL_LLM_LIMIT: int | None = None
+
+
+def _llm_semaphore(limit: int) -> asyncio.Semaphore:
+    global _GLOBAL_LLM_SEMAPHORE, _GLOBAL_LLM_LIMIT
+    if _GLOBAL_LLM_SEMAPHORE is None or _GLOBAL_LLM_LIMIT != limit:
+        _GLOBAL_LLM_SEMAPHORE = asyncio.Semaphore(limit)
+        _GLOBAL_LLM_LIMIT = limit
+    return _GLOBAL_LLM_SEMAPHORE
 
 
 class LLMError(Exception):
@@ -575,17 +592,44 @@ class LLMService:
     # Core LLM operations
     # ------------------------------------------------------------------
 
+    def _annotate_run(self, **fields: Any) -> None:
+        """Attach provider/model fields to the active LangSmith run, if any.
+
+        No-op when tracing is off or langsmith is unavailable, so it is safe in all
+        environments. Makes each llm_chat / llm_embed span self-describing.
+        """
+        try:
+            from langsmith.run_helpers import get_current_run_tree
+
+            run = get_current_run_tree()
+            if run is not None:
+                run.metadata.update({k: v for k, v in fields.items() if v is not None})
+        except Exception:
+            pass
+
     @trace_llm(name="llm_chat", run_type="llm")
     async def chat(self, messages: list[dict], **kwargs) -> str:
         """Send a chat request to the configured provider."""
-        return await self.provider.chat(messages, **kwargs)
+        self._annotate_run(
+            provider=self.settings.default_llm_provider,
+            model=kwargs.get("model", self.settings.default_llm_model),
+            n_messages=len(messages),
+        )
+        async with _llm_semaphore(self.settings.llm_max_concurrency):
+            return await self.provider.chat(messages, **kwargs)
 
     @trace_llm(name="llm_embed", run_type="embedding")
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts."""
         if not texts:
             return []
-        return await self.provider.embed(texts)
+        self._annotate_run(
+            provider=self.settings.default_llm_provider,
+            model=self.settings.embedding_model,
+            n_texts=len(texts),
+        )
+        async with _llm_semaphore(self.settings.llm_max_concurrency):
+            return await self.provider.embed(texts)
 
     async def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
@@ -659,14 +703,15 @@ class LLMService:
         else:
             raise LLMError(f"Instructor unsupported for provider: {provider}")
 
-        return await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            response_model=response_model,
-            max_retries=max_retries,
-            temperature=kwargs.get("temperature", 0.2),
-            max_tokens=kwargs.get("max_tokens", 4096),
-        )
+        async with _llm_semaphore(self.settings.llm_max_concurrency):
+            return await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_model=response_model,
+                max_retries=max_retries,
+                temperature=kwargs.get("temperature", 0.2),
+                max_tokens=kwargs.get("max_tokens", 4096),
+            )
 
     # ------------------------------------------------------------------
     # Munger-specific LLM operations

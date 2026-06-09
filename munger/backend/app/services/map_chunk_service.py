@@ -229,23 +229,35 @@ class MapChunkService:
                 source_text: str = source.content_text
                 chunk_content: str = chunk.content
 
-            prefix = await self.chunk_service._contextual_prefix(source_text, chunk_content)
-            round0 = await self._extract_chunk(chunk, source_text)
-            glean_rounds = await self._glean_loop(
-                chunk,
-                round0,
-                max_gleanings=self.settings.ingest_max_gleanings,
+            # Two independent chains within a chunk: (prefix -> embed) and
+            # (extract -> glean-loop). They share no data, so run them concurrently;
+            # per-chunk latency drops from sum to max of the two chains.
+            async def _prefix_then_embed() -> tuple[str, list[float] | None]:
+                prefix = await self.chunk_service._contextual_prefix(source_text, chunk_content)
+                embed_body = f"{prefix}\n\n{chunk_content}" if prefix else chunk_content
+                embedding: list[float] | None = None
+                if self.llm:
+                    embeddings = await self.llm.embed_texts([embed_body])
+                    embedding = embeddings[0] if embeddings else None
+                return prefix, embedding
+
+            async def _extract_then_glean():
+                round0 = await self._extract_chunk(chunk, source_text)
+                glean_rounds = await self._glean_loop(
+                    chunk,
+                    round0,
+                    max_gleanings=self.settings.ingest_max_gleanings,
+                )
+                return round0, glean_rounds
+
+            (prefix, embedding), (round0, glean_rounds) = await asyncio.gather(
+                _prefix_then_embed(),
+                _extract_then_glean(),
             )
 
             entities_raw = len(round0.entities)
             relationships_raw = len(round0.relationships)
             glean_added = sum(len(g.entities) for _, g in glean_rounds)
-
-            embed_body = f"{prefix}\n\n{chunk_content}" if prefix else chunk_content
-            embedding: list[float] | None = None
-            if self.llm:
-                embeddings = await self.llm.embed_texts([embed_body])
-                embedding = embeddings[0] if embeddings else None
 
             if embedding is None and not self.settings.ingest_allow_null_embedding:
                 raise ValueError(f"Embedding required for chunk {chunk_id}")

@@ -54,7 +54,16 @@ class Settings(BaseSettings):
     ingest_chunk_size_tokens: int = Field(default=600, alias="INGEST_CHUNK_SIZE_TOKENS")
     ingest_chunk_overlap_tokens: int = Field(default=100, alias="INGEST_CHUNK_OVERLAP_TOKENS")
     ingest_max_gleanings: int = Field(default=1, alias="INGEST_MAX_GLEANINGS")
-    ingest_chunk_worker_concurrency: int = Field(default=5, alias="INGEST_CHUNK_WORKER_CONCURRENCY")
+    ingest_chunk_worker_concurrency: int = Field(default=8, alias="INGEST_CHUNK_WORKER_CONCURRENCY")
+    ingest_wiki_worker_concurrency: int = Field(default=8, alias="INGEST_WIKI_WORKER_CONCURRENCY")
+    ingest_prefix_worker_concurrency: int = Field(default=8, alias="INGEST_PREFIX_WORKER_CONCURRENCY")
+    # Process-wide ceiling on concurrent outbound LLM/embedding requests. Bounds the sum of
+    # all per-stage concurrency so raised caps don't multiply into OpenRouter 429s.
+    llm_max_concurrency: int = Field(default=16, alias="LLM_MAX_CONCURRENCY")
+
+    # SQLAlchemy async engine pool (must exceed peak concurrent sessions across stages)
+    db_pool_size: int = Field(default=20, alias="MUNGER_DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=10, alias="MUNGER_DB_MAX_OVERFLOW")
 
     # PDF OCR (LiteParse + bundled Tesseract)
     tessdata_prefix: str = Field(default="/app/tessdata", alias="TESSDATA_PREFIX")

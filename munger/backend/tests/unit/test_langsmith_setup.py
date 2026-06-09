@@ -64,7 +64,9 @@ def test_merge_tracing_config_combines_callbacks():
     assert merged["run_name"] == "ingest-source-1"
 
 
-def test_ingest_tracing_session_attaches_tracer_when_enabled(monkeypatch):
+def test_ingest_tracing_session_activates_context_when_enabled(monkeypatch):
+    # Unified tracing: no manual callback is attached. The session activates a
+    # langsmith run-tree context and yields empty extras (nothing to merge into config).
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
     monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
@@ -74,7 +76,11 @@ def test_ingest_tracing_session_attaches_tracer_when_enabled(monkeypatch):
         LANGSMITH_PROJECT="munger-test",
     )
     with ingest_tracing_session(settings) as extras:
-        assert len(extras.get("callbacks", [])) == 1
+        assert extras == {}
+        assert "callbacks" not in extras
+
+
+def test_ingest_tracing_session_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("LANGSMITH_TRACING", "false")
     with ingest_tracing_session(Settings(LANGSMITH_TRACING=False)) as extras:
         assert extras == {}

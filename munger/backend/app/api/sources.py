@@ -21,7 +21,7 @@ from app.models.log import IngestionLog
 from app.schemas.source import SourceResponse, SourceList
 from app.models.chunk import Chunk
 from app.models.chunk_extraction import ChunkExtraction
-from app.models.entity import EntityMention
+from app.models.entity import Entity, EntityMention
 from app.models.entity_relationship import EntityRelationship
 from app.models.ingest_event import IngestEvent
 from app.models.ingest_job import IngestJob
@@ -480,12 +480,40 @@ async def get_ingest_status(
                 }
             break
 
+    # Live substage progress (cheap COUNT aggregates) so the UI can show per-task
+    # dispatched/done/failed instead of only step-level done/not-done.
+    from app.services.chunk_map_status import count_chunks_by_status
+
+    map_progress = await count_chunks_by_status(source_id)
+
+    total_entities = (
+        await db.execute(
+            select(func.count(func.distinct(EntityMention.entity_id))).where(
+                EntityMention.source_id == source_id
+            )
+        )
+    ).scalar() or 0
+    wiki_pages_done = (
+        await db.execute(
+            select(func.count(func.distinct(EntityMention.entity_id)))
+            .select_from(EntityMention)
+            .join(Entity, Entity.id == EntityMention.entity_id)
+            .where(
+                EntityMention.source_id == source_id,
+                Entity.wiki_page_id.is_not(None),
+            )
+        )
+    ).scalar() or 0
+    wiki_progress = {"pages_done": wiki_pages_done, "total": total_entities}
+
     return {
         "source_id": source_id,
         "status": source.status,
         "error_message": source.error_message,
         "updated_at": source.updated_at,
         "job_id": (active_job or latest_job).id if (active_job or latest_job) else None,
+        "map_progress": map_progress,
+        "wiki_progress": wiki_progress,
         "recent_logs": [
             {
                 "id": log.id,

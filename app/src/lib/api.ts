@@ -52,6 +52,19 @@ export interface PipelineStepInfo {
   total: number;
 }
 
+export interface MapTaskProgress {
+  pending: number;
+  running: number;
+  done: number;
+  failed: number;
+  total: number;
+}
+
+export interface WikiProgress {
+  pages_done: number;
+  total: number;
+}
+
 export interface IngestStatusResponse {
   source_id: number;
   status: string;
@@ -63,6 +76,8 @@ export interface IngestStatusResponse {
   events_has_more: boolean;
   current_step?: PipelineStepInfo | null;
   step_metrics?: Record<string, number | string>;
+  map_progress?: MapTaskProgress;
+  wiki_progress?: WikiProgress;
 }
 
 export interface WikiPageResponse {
