@@ -10,6 +10,7 @@ from app.models.chunk import Chunk
 from app.models.chunk_extraction import ChunkExtraction
 from app.models.entity_relationship import EntityRelationship
 from app.models.entity_edge import EntityEdge
+from app.models.community import Community
 
 __all__ = [
     "Source",
@@ -26,4 +27,5 @@ __all__ = [
     "ChunkExtraction",
     "EntityRelationship",
     "EntityEdge",
+    "Community",
 ]

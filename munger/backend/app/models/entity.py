@@ -29,6 +29,9 @@ class Entity(Base):
     canonical_entity_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("entities.id", ondelete="SET NULL"), nullable=True
     )
+    community_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("communities.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -47,6 +47,9 @@ psycopg-pool>=3.2.0
 # Durable execution spine (SP1)
 dbos>=1.0.0
 
+# Graph algorithms (SP2.3): PageRank + Leiden communities
+python-igraph>=0.11
+
 # Dev
 debugpy==1.8.14
 pytest==8.3.5
