@@ -4,7 +4,7 @@ import hashlib
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -46,7 +46,7 @@ class StorageService:
 
     def _get_storage_path(self, filename: str) -> Path:
         """Generate a date-based storage path for a file."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         year_month = self.sources_dir / str(now.year) / f"{now.month:02d}"
         year_month.mkdir(parents=True, exist_ok=True)
 
@@ -356,7 +356,7 @@ class StorageService:
     async def append_to_log(self, entry: str) -> None:
         """Append an entry to the wiki log file."""
         log_path = self.wiki_dir / "log.md"
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"\n## {timestamp}\n\n{entry}\n"
 
         if log_path.exists():

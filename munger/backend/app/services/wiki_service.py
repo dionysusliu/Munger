@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select, func, and_, or_, desc
 from sqlalchemy.orm import selectinload
@@ -106,7 +106,7 @@ class WikiService:
 
             page.content = content
             page.word_count = len(content.split()) if content else 0
-            page.updated_at = datetime.utcnow()
+            page.updated_at = datetime.now(timezone.utc)
 
             await session.commit()
             await session.refresh(page)
@@ -206,18 +206,21 @@ class WikiService:
     ) -> WikiLink:
         """Create a link between two wiki pages."""
         async with async_session_maker() as session:
-            # Check for existing link
-            existing = await session.execute(
-                select(WikiLink).where(
-                    and_(
-                        WikiLink.from_page_id == from_id,
-                        WikiLink.to_page_id == to_id,
+            # Check for existing link. Capture the row once: calling
+            # scalar_one_or_none() and then scalar_one() on the same (now
+            # exhausted) Result raises "This result object is closed".
+            link = (
+                await session.execute(
+                    select(WikiLink).where(
+                        and_(
+                            WikiLink.from_page_id == from_id,
+                            WikiLink.to_page_id == to_id,
+                        )
                     )
                 )
-            )
-            if existing.scalar_one_or_none():
+            ).scalar_one_or_none()
+            if link is not None:
                 # Update existing link
-                link = existing.scalar_one()
                 link.link_type = link_type
                 if context:
                     link.context = context
@@ -384,7 +387,7 @@ class WikiService:
             lines = [
                 "# Munger Knowledge Base Index",
                 "",
-                f"*Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC*",
+                f"*Last updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC*",
                 "",
                 f"**Total pages: {len(pages)}**",
                 "",
@@ -430,7 +433,7 @@ class WikiService:
             if existing:
                 existing.content = index_content
                 existing.word_count = len(index_content.split())
-                existing.updated_at = datetime.utcnow()
+                existing.updated_at = datetime.now(timezone.utc)
             else:
                 new_index = WikiPage(
                     title="Knowledge Base Index",

@@ -1,5 +1,5 @@
 """Wiki page API routes for Munger."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -155,7 +155,7 @@ async def update_wiki_page(
 
     page.content = content
     page.word_count = count_words(content)
-    page.updated_at = datetime.utcnow()
+    page.updated_at = datetime.now(timezone.utc)
 
     await db.flush()
     await db.refresh(page)
