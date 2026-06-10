@@ -49,6 +49,8 @@ def test_register_and_parse_caches_text_and_marks_not_duplicate(create_source):
     assert src.content_text and len(src.content_text) > 0, (
         "parse_document must preserve content_text in the DB"
     )
+    # register_source sets status=extracting; parse + (non-duplicate) dedup leave it unchanged.
+    assert src.status == "extracting", "register_source must set status=extracting"
     assert state.get("is_duplicate") is False
 
 

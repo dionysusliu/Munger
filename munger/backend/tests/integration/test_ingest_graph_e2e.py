@@ -86,10 +86,11 @@ def test_full_ingest_reaches_completed_and_populates_graph(create_source):
                     Chunk.source_id == source.id, Chunk.embedding.isnot(None)
                 )
             )).scalar()
-            return src.status, chunks, entities, mentions, pages, embedded
+            return src.status, src.content_summary, chunks, entities, mentions, pages, embedded
 
-    status, chunks, entities, mentions, pages, embedded = run_async(_counts())
+    status, summary, chunks, entities, mentions, pages, embedded = run_async(_counts())
     assert status == "completed", "finalize_ingest must set source.status=completed"
+    assert summary, "summarize_source must populate source.content_summary"
     assert chunks >= 1, "chunk_document must create chunk rows"
     assert embedded == chunks, "map_chunks must embed every chunk"
     assert entities >= 2, "reduce_entities must create the scripted entities"
