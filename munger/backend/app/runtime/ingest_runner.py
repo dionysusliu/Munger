@@ -79,12 +79,18 @@ class IngestRunner:
                 payload=serialize_langchain_message(message),
             )
 
-    async def run(self, source_id: int, job_id: int | None = None) -> IngestRunState:
+    async def run(
+        self,
+        source_id: int,
+        job_id: int | None = None,
+        orchestrator: str | None = None,
+    ) -> IngestRunState:
+        orchestrator = orchestrator or self.settings.ingest_orchestrator
         logger.info(
             "Starting ingest for source %s (job=%s, orchestrator=%s)",
             source_id,
             job_id,
-            self.settings.ingest_orchestrator,
+            orchestrator,
         )
         services = self._build_services()
 
@@ -101,7 +107,11 @@ class IngestRunner:
 
         checkpointer = await get_async_checkpointer(self.settings)
 
-        if self.settings.ingest_orchestrator == "graph":
+        if orchestrator == "dbos":
+            from app.runtime.dbos_ingest import run_via_dbos
+            return await run_via_dbos(source_id, job_id)
+
+        if orchestrator == "graph":
             return await self._run_graph(
                 source_id=source_id,
                 job_id=job_id,

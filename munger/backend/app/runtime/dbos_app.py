@@ -43,9 +43,12 @@ def launch_dbos(settings: Settings | None = None) -> None:
     global _launched
     if _launched:
         return
+    # get_dbos must be called OUTSIDE the _lock block: get_dbos also acquires
+    # _lock when _instance is None, and threading.Lock is not re-entrant.
+    # Calling it here first is safe because get_dbos is internally thread-safe.
+    get_dbos(settings)
     with _lock:
         if not _launched:
-            get_dbos(settings)
             DBOS.launch()
             _launched = True
             logger.info("DBOS launched")
