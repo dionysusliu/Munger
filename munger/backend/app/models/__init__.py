@@ -9,6 +9,7 @@ from app.models.ingest_event import IngestEvent
 from app.models.chunk import Chunk
 from app.models.chunk_extraction import ChunkExtraction
 from app.models.entity_relationship import EntityRelationship
+from app.models.entity_edge import EntityEdge
 
 __all__ = [
     "Source",
@@ -24,4 +25,5 @@ __all__ = [
     "Chunk",
     "ChunkExtraction",
     "EntityRelationship",
+    "EntityEdge",
 ]

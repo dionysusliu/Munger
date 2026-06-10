@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "sources", "chunks", "chunk_extractions", "entities", "entity_mentions",
     "entity_relationships", "wiki_pages", "wiki_links", "ingest_jobs",
     "ingest_events", "configs", "ingestion_logs", "munger_analyses",
+    "entity_edges",
 }
 
 
