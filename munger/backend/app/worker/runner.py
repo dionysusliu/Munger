@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.runtime.ingest_runner import IngestRunner
 from app.services.ingest_job_service import claim_pending_jobs, complete_job, mark_job_running, reconcile_stale_jobs, touch_job_heartbeat
+from app.runtime.dbos_app import launch_dbos
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,16 @@ async def _execute_job(job_id: int, source_id: int) -> None:
             await session.commit()
 
 
+def maybe_launch_dbos(settings) -> None:
+    """Launch DBOS once if the durable orchestrator is selected."""
+    if settings.ingest_orchestrator == "dbos":
+        launch_dbos(settings)
+        logger.info("DBOS launched for worker (orchestrator=dbos)")
+
+
 async def run_worker_forever() -> None:
     settings = get_settings()
+    maybe_launch_dbos(settings)
 
     logger.info(
         "Starting ingest worker id=%s concurrency=%s",

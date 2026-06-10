@@ -112,3 +112,25 @@ def test_dbos_step_does_not_poison_global_engine_under_concurrent_use(create_sou
     assert beats_ok == 5, "global-engine heartbeats must succeed concurrently with the DBOS step"
     assert ping == 1, "global engine must remain usable after the DBOS step"
     assert status in {"completed", "failed"}
+
+
+def test_worker_launches_dbos_when_orchestrator_is_dbos(monkeypatch):
+    import app.worker.runner as worker_runner
+
+    launched = {"called": False}
+    monkeypatch.setattr(
+        worker_runner, "launch_dbos", lambda settings=None: launched.__setitem__("called", True)
+    )
+    worker_runner.maybe_launch_dbos(type("S", (), {"ingest_orchestrator": "dbos"})())
+    assert launched["called"] is True
+
+
+def test_worker_skips_dbos_when_orchestrator_is_graph(monkeypatch):
+    import app.worker.runner as worker_runner
+
+    launched = {"called": False}
+    monkeypatch.setattr(
+        worker_runner, "launch_dbos", lambda settings=None: launched.__setitem__("called", True)
+    )
+    worker_runner.maybe_launch_dbos(type("S", (), {"ingest_orchestrator": "graph"})())
+    assert launched["called"] is False
