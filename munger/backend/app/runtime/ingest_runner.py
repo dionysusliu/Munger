@@ -84,6 +84,7 @@ class IngestRunner:
         source_id: int,
         job_id: int | None = None,
         orchestrator: str | None = None,
+        use_checkpointer: bool = True,
     ) -> IngestRunState:
         orchestrator = orchestrator or self.settings.ingest_orchestrator
         logger.info(
@@ -92,6 +93,16 @@ class IngestRunner:
             job_id,
             orchestrator,
         )
+
+        if orchestrator == "dbos":
+            # Durable spine: start the DBOS workflow, which runs the pipeline
+            # (forced to "graph") inside its own event loop. Do NOT build services
+            # or the checkpointer on this (outer) loop — the workflow owns them,
+            # bound to the step's loop.
+            from app.runtime.dbos_ingest import run_via_dbos
+
+            return await run_via_dbos(source_id, job_id)
+
         services = self._build_services()
 
         if not services.llm:
@@ -105,11 +116,10 @@ class IngestRunner:
             )
             return {"source_id": source_id, "error": message, "status": "failed"}
 
-        checkpointer = await get_async_checkpointer(self.settings)
-
-        if orchestrator == "dbos":
-            from app.runtime.dbos_ingest import run_via_dbos
-            return await run_via_dbos(source_id, job_id)
+        # The DBOS path runs the graph with no LangGraph checkpointer (DBOS itself
+        # provides durability), avoiding a loop-bound Postgres checkpointer pool
+        # inside the step thread.
+        checkpointer = await get_async_checkpointer(self.settings) if use_checkpointer else None
 
         if orchestrator == "graph":
             return await self._run_graph(

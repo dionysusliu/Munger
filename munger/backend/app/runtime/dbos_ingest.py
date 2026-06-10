@@ -20,19 +20,40 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_pipeline_async(source_id: int, job_id: int | None) -> IngestRunState:
-    # Dispose pooled connections from the previous event loop.
-    # asyncio.run() creates a fresh event loop per DBOS step thread;
-    # psycopg3 async connections are bound to the loop they were created in,
-    # so pooled connections from a prior loop would hang when reused.
-    from app.core.database import engine
-    await engine.dispose()
-    # Reset the checkpointer singleton so it is recreated in this event loop.
-    # psycopg_pool.AsyncConnectionPool is also loop-bound.
-    from app.runtime.harness.checkpointer import reset_checkpointer
-    await reset_checkpointer()
-    # Force "graph" so we reuse the existing pipeline and never recurse into dbos.
-    runner = IngestRunner(get_settings())
-    return await runner.run(source_id, job_id=job_id, orchestrator="graph")
+    # This coroutine runs in the DBOS step's own thread + fresh event loop
+    # (asyncio.run). psycopg3 async connections are loop-bound, so we must NOT
+    # reuse the worker loop's global engine here. Bind a step-local engine via the
+    # database module's ContextVar — isolated to this context — so the worker
+    # loop's concurrent heartbeat / job-status writes keep using the global engine
+    # without cross-loop corruption. Two concurrent steps each get their own
+    # engine + ContextVar binding (no shared mutable global pool).
+    import app.core.database as db
+    from sqlalchemy.ext.asyncio import (
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
+
+    step_engine = create_async_engine(db.DATABASE_URL, future=True)
+    step_session_maker = async_sessionmaker(
+        step_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+    token = db._session_maker_var.set(step_session_maker)
+    try:
+        # Force "graph" (never recurse into dbos) and skip the LangGraph
+        # checkpointer — DBOS provides durability, and a Postgres checkpointer pool
+        # would be loop-bound to this short-lived step loop.
+        runner = IngestRunner(get_settings())
+        return await runner.run(
+            source_id, job_id=job_id, orchestrator="graph", use_checkpointer=False
+        )
+    finally:
+        db._session_maker_var.reset(token)
+        await step_engine.dispose()
 
 
 @DBOS.step()

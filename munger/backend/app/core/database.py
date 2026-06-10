@@ -1,4 +1,5 @@
 """Database configuration and session management."""
+from contextvars import ContextVar
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -34,13 +35,31 @@ engine = create_async_engine(
     future=True,
 )
 
-async_session_maker = async_sessionmaker(
+_default_session_maker = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,
 )
+
+# The "current" sessionmaker is held in a ContextVar so an isolated execution
+# context (e.g. the DBOS ingest step, which runs the pipeline in its own thread
+# and event loop) can bind a loop-local engine without disturbing the worker
+# loop's global engine. Normal callers transparently get the global maker.
+_session_maker_var: ContextVar = ContextVar(
+    "munger_session_maker", default=_default_session_maker
+)
+
+
+def async_session_maker() -> AsyncSession:
+    """Return an AsyncSession from the context-current sessionmaker.
+
+    Use exactly as before: ``async with async_session_maker() as session:``.
+    Resolution happens at call time, so a context that overrides
+    ``_session_maker_var`` transparently gets sessions from its own engine.
+    """
+    return _session_maker_var.get()()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

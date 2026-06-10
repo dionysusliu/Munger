@@ -40,3 +40,75 @@ def test_runner_routes_to_dbos(create_source):
         destroy_dbos()
     assert result["source_id"] == source.id
     assert "status" in result
+
+
+def test_dbos_step_does_not_poison_global_engine_under_concurrent_use(create_source):
+    """Regression: the DBOS step must run on its own loop-local engine, so the
+    worker loop's GLOBAL engine stays usable concurrently (heartbeat / job status)
+    and afterward. The old global-engine-dispose approach broke exactly this."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.core.database import async_session_maker
+    from app.models.ingest_job import IngestJob
+    from app.services.ingest_job_service import (
+        complete_job,
+        enqueue_ingest_job,
+        touch_job_heartbeat,
+    )
+    from tests.conftest import run_async
+
+    source = create_source(status="pending", content_text="concurrency probe")
+    settings = Settings(INGEST_ORCHESTRATOR="dbos")
+    launch_dbos(settings)
+
+    async def _scenario():
+        async with async_session_maker() as session:
+            job = await enqueue_ingest_job(session, source.id)
+            await session.commit()
+            jid = job.id
+
+        beats_ok = 0
+
+        async def _beats():
+            # Hammer the GLOBAL engine on this (worker) loop while the DBOS step
+            # runs the pipeline on its own loop/engine in an executor thread.
+            nonlocal beats_ok
+            for _ in range(5):
+                async with async_session_maker() as s:
+                    await touch_job_heartbeat(s, jid)
+                    await s.commit()
+                beats_ok += 1
+                await asyncio.sleep(0.05)
+
+        run_task = asyncio.create_task(
+            IngestRunner(settings).run(source.id, job_id=jid)
+        )
+        beat_task = asyncio.create_task(_beats())
+        result = await run_task
+        await beat_task
+
+        async with async_session_maker() as session:
+            await complete_job(
+                session,
+                jid,
+                failed=(result.get("status") == "failed"),
+                error=result.get("error"),
+            )
+            await session.commit()
+        # Global engine must still be healthy after the step finished.
+        async with async_session_maker() as session:
+            ping = (await session.execute(text("SELECT 1"))).scalar()
+            final = await session.get(IngestJob, jid)
+        return result, beats_ok, ping, final.status
+
+    try:
+        result, beats_ok, ping, status = run_async(_scenario())
+    finally:
+        destroy_dbos()
+
+    assert result["source_id"] == source.id
+    assert beats_ok == 5, "global-engine heartbeats must succeed concurrently with the DBOS step"
+    assert ping == 1, "global engine must remain usable after the DBOS step"
+    assert status in {"completed", "failed"}
