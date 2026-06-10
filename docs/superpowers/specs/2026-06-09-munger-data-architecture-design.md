@@ -45,7 +45,7 @@ Initial design put one orchestrator (Dagster) over everything. **Dagster orchest
 | LLM + embedding calls | DBOS step → LLM API / local TEI, rate-limited via DBOS queue | Ray Data+vLLM (bulk), Pathway (incremental) |
 | Ingestion pipeline | **DBOS workflow** | DBOS workflow |
 | Entity generation (extract + resolve) | DBOS steps (extract=LLM, resolve=block→score→cluster) | extract→Ray, resolve incremental→Pathway, sweep→batch |
-| Graph building (edges, PageRank, communities) | DBOS steps (igraph) | edges→Pathway, PageRank/Leiden→batch |
+| Graph building (edges, PageRank, communities) | DBOS steps (NetworkX + Louvain; mirrors txtai's Graph) | edges→Pathway, PageRank/Louvain→batch |
 
 ## 4a. Diagrams
 
