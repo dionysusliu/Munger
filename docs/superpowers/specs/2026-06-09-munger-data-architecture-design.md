@@ -47,6 +47,103 @@ Initial design put one orchestrator (Dagster) over everything. **Dagster orchest
 | Entity generation (extract + resolve) | DBOS steps (extract=LLM, resolve=block→score→cluster) | extract→Ray, resolve incremental→Pathway, sweep→batch |
 | Graph building (edges, PageRank, communities) | DBOS steps (igraph) | edges→Pathway, PageRank/Leiden→batch |
 
+## 4a. Diagrams
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph SERVING["Serving plane (low latency, ~1 QPS)"]
+        FE["Frontend (React)"]
+        API["FastAPI"]
+        RET["Retrieval"]
+        CHAT["Chat / HITL agent"]
+        FE --> API
+        API --> RET
+        API --> CHAT
+    end
+    subgraph SPINE["DBOS spine (durable, Postgres-backed)"]
+        ING["Ingest workflows"]
+        REF["Refinement: resolution, edges, salience, communities"]
+    end
+    subgraph SCALE["Scale-time (SP5, deferred)"]
+        PW["Pathway (incremental dataflow)"]
+        RAY["Ray (GPU batch)"]
+    end
+    PG[("Postgres: system of record + graph")]
+    LANCE[("LanceDB: vectors / ANN")]
+    API -->|enqueue| ING
+    CHAT -->|feedback| REF
+    RET -->|read| PG
+    RET -->|ANN| LANCE
+    ING -->|write| PG
+    ING -->|embeddings| LANCE
+    REF -->|materialize| PG
+    ING -. SP5 .-> PW
+    REF -. SP5 .-> RAY
+```
+
+### Write path — ingest
+
+```mermaid
+flowchart LR
+    UP["Upload (PDF / URL / text)"] --> POST["POST /sources/:id/ingest"]
+    POST --> JOB[("ingest_jobs queue")]
+    JOB --> WK["Worker claims (SKIP LOCKED)"]
+    WK --> WF["DBOS ingest workflow"]
+    WF --> P1["register, parse, hash_dedup"]
+    P1 --> P2["chunk, map (extract + embed)"]
+    P2 --> P3["reduce, link"]
+    P3 --> P4["summarize, wiki, link_wiki"]
+    P4 --> P5["finalize (+ edge rollup)"]
+    P5 --> PG[("Postgres")]
+    P2 --> LANCE[("LanceDB")]
+```
+
+### Read path — retrieval + chat
+
+```mermaid
+flowchart LR
+    Q["Query / chat turn"] --> SEED["Seed entities"]
+    SEED --> R1["PPR over entity_edges"]
+    SEED --> R2["vector-chunks (LanceDB)"]
+    SEED --> R3["vector-entities (LanceDB)"]
+    SEED --> R4["BM25 / FTS (Postgres)"]
+    R1 --> FUSE["Fuse (RRF)"]
+    R2 --> FUSE
+    R3 --> FUSE
+    R4 --> FUSE
+    FUSE --> RANK["Rerank (+salience, +recency)"]
+    RANK --> ASM["Entity-centric assembly"]
+    ASM --> ANS["LLM answer + citations"]
+    ANS --> FB["Feedback / edit proposals"]
+    FB -. nearline .-> REF["Refinement (mark stale)"]
+```
+
+### Background tasks — compute tiers
+
+```mermaid
+flowchart TB
+    subgraph ONLINE["Online (under 1s, in request)"]
+        O1["PPR retrieval"]
+        O2["log feedback"]
+    end
+    subgraph NEAR["Nearline (DBOS sensors: feedback / new source)"]
+        N1["fold source in"]
+        N2["resolve vs neighbors"]
+        N3["edge rollup (update_for_source)"]
+        N4["regen affected wiki / local community"]
+    end
+    subgraph OFFLINE["Offline (DBOS schedules)"]
+        F1["full ER sweep (block, score, cluster)"]
+        F2["Leiden communities + reports"]
+        F3["PageRank salience"]
+        F4["edge rebuild_all, prune weak edges"]
+    end
+    O2 -. triggers .-> NEAR
+    NEAR -. backfill .-> OFFLINE
+```
+
 ## 5. Storage & data model
 
 ### Stores
@@ -90,6 +187,60 @@ Everything else (`weight`, `confidence`, `salience`, `description`, `embedding`,
 - New: `feedback`, `labeled_pairs`, `chat_sessions`, `chat_messages`.
 - Partition the giant tables (`entity_mentions`, `chunk_extractions`) by source_id/time at scale.
 - `ingest_jobs`/`ingest_events` shrink — DBOS owns run/retry/timeline state.
+
+### Core data model (diagram)
+
+Target model. `RELATIONSHIP_EVIDENCE` is the current `entity_relationships` (evidence layer); `ENTITY_EDGES` is the derived weighted adjacency (SP2.1); `FEEDBACK` / `LABELED_PAIRS` / `CHAT_*` are planned (SP2.2/SP4). Vectors move to LanceDB.
+
+```mermaid
+erDiagram
+    SOURCES ||--o{ CHUNKS : has
+    CHUNKS ||--o{ CHUNK_EXTRACTIONS : per_chunk
+    CHUNKS ||--o{ ENTITY_MENTIONS : at
+    SOURCES ||--o{ ENTITY_MENTIONS : provenance
+    ENTITIES ||--o{ ENTITY_MENTIONS : mentioned
+    ENTITIES ||--o{ RELATIONSHIP_EVIDENCE : endpoint
+    SOURCES ||--o{ RELATIONSHIP_EVIDENCE : from
+    ENTITIES ||--o{ ENTITY_EDGES : node
+    ENTITIES |o--o| ENTITIES : canonical_of
+    ENTITIES |o--o| WIKI_PAGES : page
+    WIKI_PAGES ||--o{ WIKI_LINKS : from
+    SOURCES ||--o{ INGEST_JOBS : queued
+    CHAT_SESSIONS ||--o{ CHAT_MESSAGES : has
+    ENTITIES {
+        int id PK
+        string name
+        string entity_type
+        float salience "derived, SP2.3"
+        int canonical_entity_id FK "reversible merge, SP2.2"
+        vector embedding "to LanceDB"
+    }
+    RELATIONSHIP_EVIDENCE {
+        int id PK
+        int source_entity_id FK
+        int target_entity_id FK
+        string relationship_type
+        float confidence
+        int source_id FK
+    }
+    ENTITY_EDGES {
+        int src_entity_id FK
+        int tgt_entity_id FK
+        float weight "sum confidence, derived"
+        int evidence_count
+        string top_rel_type
+    }
+    FEEDBACK {
+        string type "rating/correction/pin"
+        string target_kind
+        int target_id
+    }
+    LABELED_PAIRS {
+        int entity_a FK
+        int entity_b FK
+        string decision "must_link/cannot_link"
+    }
+```
 
 ## 6. Retrieval (serving plane)
 
