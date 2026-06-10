@@ -5,6 +5,7 @@ from typing import Optional
 
 from app.core.config import Settings
 from app.services.chunk_service import ChunkService
+from app.services.edge_service import EdgeService
 from app.services.entity_service import EntityService
 from app.services.extraction_service import ExtractionService
 from app.services.linking_service import LinkingService
@@ -27,6 +28,7 @@ class RuntimeServices:
     extraction: Optional[ExtractionService] = None
     resolution: Optional[ResolutionService] = None
     linking: Optional[LinkingService] = None
+    edges: Optional[EdgeService] = None
 
     @classmethod
     def from_settings(cls, settings: Settings, llm: Optional[LLMService] = None) -> "RuntimeServices":
@@ -40,6 +42,7 @@ class RuntimeServices:
         extraction = ExtractionService(llm_service=llm, settings=settings) if llm else None
         resolution = ResolutionService(llm_service=llm, settings=settings) if llm else None
         linking = LinkingService(llm_service=llm, settings=settings) if llm else None
+        edges = EdgeService(settings)
         return cls(
             settings=settings,
             storage=storage,
@@ -51,4 +54,5 @@ class RuntimeServices:
             extraction=extraction,
             resolution=resolution,
             linking=linking,
+            edges=edges,
         )
