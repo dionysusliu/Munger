@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     ingest_chunk_overlap_tokens: int = Field(default=100, alias="INGEST_CHUNK_OVERLAP_TOKENS")
     ingest_max_gleanings: int = Field(default=1, alias="INGEST_MAX_GLEANINGS")
     ingest_chunk_worker_concurrency: int = Field(default=5, alias="INGEST_CHUNK_WORKER_CONCURRENCY")
+    ingest_extraction_window_chunks: int = Field(default=1, alias="INGEST_EXTRACTION_WINDOW_CHUNKS")
 
     # PDF OCR (LiteParse + bundled Tesseract)
     tessdata_prefix: str = Field(default="/app/tessdata", alias="TESSDATA_PREFIX")
