@@ -14,6 +14,13 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
 ```
 Current: **134 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
+**Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
+```
+OPENROUTER_API_KEY=sk-or-... TEST_DATABASE_URL=…/munger_test \
+  .../.venv/bin/python -m pytest tests/live -m live_llm -v
+```
+Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_MODEL` (default `qwen/qwen3-embedding-8b`, must be 768-dim). Defaults = the project's OpenRouter models; **verified 4/4 passing** against real OpenRouter.
+
 ## Design spec (north-star)
 
 - `docs/superpowers/specs/2026-06-09-munger-data-architecture-design.md` — four-runtime architecture (FastAPI serving · **DBOS** durable spine · Pathway/Ray deferred to scale) over Postgres + LanceDB; least-viable-state data model; rec-sys retrieval funnel; conservative chat + self-improvement; BIG-TABLE test harness; SP0–SP5 roadmap. Includes mermaid diagrams (architecture / read-write paths / background tiers / data model).
