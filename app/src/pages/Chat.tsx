@@ -35,6 +35,8 @@ export default function Chat() {
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Latest selected session — async history loads bail out if the user switched away.
+  const activeSessionRef = useRef<number | null>(null);
 
   async function loadSessions() {
     try {
@@ -65,8 +67,9 @@ export default function Chat() {
         }
 
         setSessionId(sid);
+        activeSessionRef.current = sid;
         const history = await chatMessages(sid);
-        if (cancelled) return;
+        if (cancelled || activeSessionRef.current !== sid) return;
         const mapped: ChatMessage[] = history.messages.map((m) => ({
           id: m.id,
           role: m.role as 'user' | 'assistant',
@@ -95,6 +98,7 @@ export default function Chat() {
 
   function handleNewSession() {
     localStorage.removeItem(STORAGE_KEY);
+    activeSessionRef.current = null;
     setSessionId(null);
     setMessages([]);
     setError(null);
@@ -107,9 +111,11 @@ export default function Chat() {
     setError(null);
     setInput('');
     setSessionId(sid);
+    activeSessionRef.current = sid;
     localStorage.setItem(STORAGE_KEY, String(sid));
     try {
       const data = await chatMessages(sid);
+      if (activeSessionRef.current !== sid) return; // user switched away mid-load
       const mapped: ChatMessage[] = data.messages.map((m) => ({
         id: m.id,
         role: m.role as 'user' | 'assistant',
@@ -130,6 +136,7 @@ export default function Chat() {
       await chatDeleteSession(sid);
       if (sid === sessionId) {
         localStorage.removeItem(STORAGE_KEY);
+        activeSessionRef.current = null;
         setSessionId(null);
         setMessages([]);
       }
@@ -291,7 +298,7 @@ export default function Chat() {
             <div className="space-y-4">
               {messages.map((msg, idx) => (
                 <motion.div
-                  key={idx}
+                  key={msg.id ?? `m-${idx}`}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
