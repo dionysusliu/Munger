@@ -99,17 +99,35 @@ class CommunityReportService:
         return {"communities": len(comms), "generated": generated}
 
     async def community_search(self, query: str, limit: int = 10) -> list[dict]:
-        """Thematic search: ILIKE over title/summary/keywords (GraphRAG global complement)."""
-        # escape LIKE wildcards in user input (backslash is Postgres' default ESCAPE char)
-        esc = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        """Thematic search, ts_rank-ordered over the generated search_vector (SP3.3).
+
+        websearch_to_tsquery semantics: multi-word queries are AND-matched after stemming
+        (it never raises on malformed input). The escaped-ILIKE substring fallback fires
+        only when FTS returns ZERO rows (partial tokens, non-English fragments) — a weak
+        FTS hit intentionally wins over substring matches."""
+        query = query[:200]  # belt: bound pathological input
         async with async_session_maker() as s:
             rows = (await s.execute(
                 text("""
-                    SELECT id, title, summary, size FROM communities
-                    WHERE title ILIKE :q OR summary ILIKE :q OR keywords ILIKE :q
-                    ORDER BY size DESC
+                    SELECT id, title, summary, size,
+                           ts_rank(search_vector, websearch_to_tsquery('english', :q)) AS rank
+                    FROM communities
+                    WHERE search_vector @@ websearch_to_tsquery('english', :q)
+                    ORDER BY rank DESC, size DESC
                     LIMIT :l
                 """),
-                {"q": f"%{esc}%", "l": limit},
+                {"q": query, "l": limit},
             )).all()
+            if not rows:
+                # escape LIKE wildcards (backslash is Postgres' default ESCAPE char)
+                esc = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                rows = (await s.execute(
+                    text("""
+                        SELECT id, title, summary, size, 0.0 AS rank FROM communities
+                        WHERE title ILIKE :q OR summary ILIKE :q OR keywords ILIKE :q
+                        ORDER BY size DESC
+                        LIMIT :l
+                    """),
+                    {"q": f"%{esc}%", "l": limit},
+                )).all()
         return [{"community_id": r[0], "title": r[1], "summary": r[2], "size": r[3]} for r in rows]
