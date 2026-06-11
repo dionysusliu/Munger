@@ -4,7 +4,7 @@ Single entry point for resuming work. Last updated 2026-06-10.
 
 ## Where things are
 
-**Branch:** `worktree-sp4.2-feedback` (worktree: `.claude/worktrees/sp4.2-feedback`), off `main`. `main` now has SP0.1–SP4.1 + live-LLM tests (PR #3–#8 merged). This branch adds **SP4.2** (feedback write-back); a fresh PR brings it in.
+**Branch:** `worktree-frontend-chat` (worktree: `.claude/worktrees/frontend-chat`), off `main`. `main` now has SP0.1–SP4.2 + live-LLM tests (PR #3–#9 merged). This branch adds the **frontend chat panel** (+ chat message-id exposure); a fresh PR brings it in.
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -39,7 +39,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-10-sp3.2-retrieval-sharpening.md` | ✅ DONE — canonical-aware retrieval (COALESCE collapse) + vector seed-linking (existing entities HNSW, **no migration**) |
 | `2026-06-10-sp4.1-chat-over-retrieval.md` | ✅ DONE — `ChatService.ask` (read-only RAG: retrieve→bridge `shortest_path`→synthesize→persist), `chat_sessions`/`chat_messages` (mig 012), `GraphService.shortest_path`, `POST /api/chat` + session/messages |
 | `2026-06-10-sp4.2-feedback-writeback.md` | ✅ DONE — `FeedbackService` merge (labeled_pairs+resolve, reject also un-merges) / relate (`method='human'` relationship → edge rebuild) / rate (mig 013 `chat_messages.rating`); `POST /api/feedback/{merge,relate,rate}` |
-| **frontend chat panel** | ⏳ TODO — `/chat` route + `Chat.tsx` (backend API ready) |
+| frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
 

@@ -41,10 +41,13 @@ def test_ask_synthesizes_with_citations_and_bridge_and_persists():
     assert any(c["name"] == "Compounding" for c in out["citations"])
     assert a_id in out["bridge"] and b_id in out["bridge"]
 
+    assert isinstance(out["assistant_message_id"], int)
+
     msgs = run_async(svc.messages(sid))
     assert len(msgs) == 2
     assert msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant"
     assert msgs[1]["meta"] is not None
+    assert msgs[1]["id"] == out["assistant_message_id"]
 
 
 def test_history_is_replayed_into_prompt():
