@@ -99,6 +99,8 @@ class Settings(BaseSettings):
 
     # Co-mention linking diet (linking-diet)
     ingest_comention_min_chunks: int = Field(default=2, alias="INGEST_COMENTION_MIN_CHUNKS")
+    # Wiki generation gate: entities with fewer than this many mentions are skipped
+    ingest_wiki_min_mentions: int = Field(default=2, alias="INGEST_WIKI_MIN_MENTIONS")
 
     # Cross-chunk linking tunables (plan §4)
     link_fuzzy_ratio: int = Field(default=90, alias="INGEST_LINK_FUZZY_RATIO")

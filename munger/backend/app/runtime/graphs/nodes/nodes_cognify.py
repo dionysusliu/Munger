@@ -234,20 +234,38 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
             source = await get_source(source_id)
             created = 0
             updated = 0
+            skipped_low_mention = 0
             summary_page_id: int | None = None
 
             if source and services.wiki and services.llm:
                 text = source.content_text or ""
                 summary = source.content_summary or ""
+                threshold = services.settings.ingest_wiki_min_mentions
 
                 async with async_session_maker() as session:
+                    # Collect all unique entity ids for this source (to count skips)
+                    all_entity_ids = set(
+                        (
+                            await session.execute(
+                                select(Entity.id)
+                                .join(EntityMention, EntityMention.entity_id == Entity.id)
+                                .where(EntityMention.source_id == source_id)
+                                .distinct()
+                            )
+                        ).scalars().all()
+                    )
+                    # Gate: only entities meeting the mention threshold get wiki pages
                     rows = (
                         await session.execute(
                             select(EntityMention, Entity)
                             .join(Entity, Entity.id == EntityMention.entity_id)
                             .where(EntityMention.source_id == source_id)
+                            .where(Entity.mention_count >= threshold)
                         )
                     ).all()
+
+                passing_entity_ids = {entity.id for _, entity in rows}
+                skipped_low_mention = len(all_entity_ids - passing_entity_ids)
 
                 try:
                     page_content = summary or text[:5000]
@@ -308,6 +326,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
 
             m["pages_created"] = created
             m["pages_updated"] = updated
+            m["skipped_low_mention"] = skipped_low_mention
             wiki_metrics.update(m)
 
         # --- link_wiki_pages ---
