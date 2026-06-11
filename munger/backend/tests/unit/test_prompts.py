@@ -8,6 +8,11 @@ from app.prompts.ontology import (
     NAMING_RULES,
     ontology_block,
 )
+from app.prompts.extraction import (
+    EXTRACT_SYSTEM,
+    GLEAN_SYSTEM,
+    GLEAN_YES_NO_SYSTEM,
+)
 
 
 class TestOntologyVocabulary:
@@ -52,3 +57,24 @@ class TestOntologyVocabulary:
     def test_naming_rules_ban_document_local_labels(self):
         for banned in ("Theorem N", "Figure N", "Table N", "Section N"):
             assert banned in NAMING_RULES
+
+
+class TestExtractionPrompts:
+    def test_extract_system_contains_full_vocabulary(self):
+        for name in ENTITY_TYPE_NAMES:
+            assert name in EXTRACT_SYSTEM
+
+    def test_extract_system_keeps_json_contract(self):
+        assert '"entities"' in EXTRACT_SYSTEM
+        assert '"relationships"' in EXTRACT_SYSTEM
+        assert "char_start" in EXTRACT_SYSTEM
+
+    def test_extract_system_dropped_the_ellipsis_type_list(self):
+        assert "person|concept|model|..." not in EXTRACT_SYSTEM
+
+    def test_glean_prompts_carry_naming_rules(self):
+        assert "Theorem N" in GLEAN_SYSTEM
+        assert "Theorem N" in GLEAN_YES_NO_SYSTEM
+
+    def test_glean_yes_no_still_demands_yes_or_no(self):
+        assert "YES or NO" in GLEAN_YES_NO_SYSTEM
