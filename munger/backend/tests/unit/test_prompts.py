@@ -110,7 +110,10 @@ class TestWikiPrompts:
     def test_unknown_page_type_falls_back_gracefully(self):
         system = build_wiki_system("X", "no_such_type")
         assert "wiki page" in system
+        assert "[[" in system  # rule blocks still injected
+        assert "Do not invent" in system
 
     def test_suggest_links_keeps_json_contract(self):
         assert "to_page_id" in SUGGEST_LINKS_SYSTEM
         assert "link_type" in SUGGEST_LINKS_SYSTEM
+        assert '"context"' in SUGGEST_LINKS_SYSTEM

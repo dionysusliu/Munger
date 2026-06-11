@@ -51,7 +51,7 @@ WIKI_TYPE_PROMPTS: dict[str, str] = {
     ),
 }
 
-_FALLBACK_PROMPT = "Create a well-structured wiki page in markdown format."
+_FALLBACK_PROMPT = "Create a well-structured wiki page."
 
 
 def build_wiki_system(title: str, page_type: str) -> str:
