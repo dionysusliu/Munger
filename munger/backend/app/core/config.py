@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     dbos_system_schema: str = Field(default="dbos", alias="DBOS_SYSTEM_SCHEMA")
     dbos_system_database_url: Optional[str] = Field(default=None, alias="DBOS_SYSTEM_DATABASE_URL")
 
+    # Co-mention linking diet (linking-diet)
+    ingest_comention_min_chunks: int = Field(default=2, alias="INGEST_COMENTION_MIN_CHUNKS")
+
     # Cross-chunk linking tunables (plan §4)
     link_fuzzy_ratio: int = Field(default=90, alias="INGEST_LINK_FUZZY_RATIO")
     link_fuzzy_trgm: float = Field(default=0.45, alias="INGEST_LINK_TRGM")
