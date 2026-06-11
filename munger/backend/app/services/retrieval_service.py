@@ -29,15 +29,17 @@ class RetrievalService:
         self.edges = edge_service or EdgeService(self.settings)
         self.graph = graph_service or GraphService(self.settings)
 
-    async def link_seeds(self, query: str, limit: int = 5) -> list[int]:
-        """Seed entities for the graph channel: exact lower(name) tokens OR ILIKE on the query."""
+    async def link_seeds(self, query: str, limit: int = 5, query_vec: list[float] | None = None) -> list[int]:
+        """Seed entities (resolved to canonical) for the graph channel: name match (+ vector ANN in Task 2)."""
         tokens = [t for t in query.lower().split() if t]
         async with async_session_maker() as s:
             rows = (await s.execute(
                 text("""
-                    SELECT id FROM entities
+                    SELECT COALESCE(canonical_entity_id, id) AS cid, MAX(salience) AS sal
+                    FROM entities
                     WHERE lower(name) = ANY(:tokens) OR name ILIKE :pat
-                    ORDER BY salience DESC NULLS LAST
+                    GROUP BY COALESCE(canonical_entity_id, id)
+                    ORDER BY sal DESC NULLS LAST
                     LIMIT :lim
                 """),
                 {"tokens": tokens or [""], "pat": f"%{query}%", "lim": limit},
@@ -85,6 +87,30 @@ class RetrievalService:
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
         return [eid for eid, _ in ranked[:limit]]
 
+    async def _canonical_map(self, ids: list[int]) -> dict[int, int]:
+        """id -> COALESCE(canonical_entity_id, id) for the given ids."""
+        uniq = list({i for i in ids})
+        if not uniq:
+            return {}
+        async with async_session_maker() as s:
+            rows = (await s.execute(
+                text("SELECT id, COALESCE(canonical_entity_id, id) FROM entities WHERE id = ANY(:ids)"),
+                {"ids": uniq},
+            )).all()
+        return {r[0]: r[1] for r in rows}
+
+    @staticmethod
+    def _collapse(ids: list[int], canon: dict[int, int]) -> list[int]:
+        """Map each id to its canonical, dedup preserving first (best-rank) occurrence."""
+        out: list[int] = []
+        seen: set[int] = set()
+        for i in ids:
+            c = canon.get(i, i)
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+        return out
+
     @staticmethod
     def _rrf(ranked_lists: list[list[int]], k: int = RRF_K) -> dict[int, float]:
         scores: dict[int, float] = {}
@@ -106,6 +132,11 @@ class RetrievalService:
         vector_ids = await self._vector_entities(qvec) if qvec is not None else []
         lexical_ids = await self._lexical_entities(query)
         graph_ids = await self._graph_entities(seeds)
+
+        canon = await self._canonical_map(vector_ids + lexical_ids + graph_ids)
+        vector_ids = self._collapse(vector_ids, canon)
+        lexical_ids = self._collapse(lexical_ids, canon)
+        graph_ids = self._collapse(graph_ids, canon)
 
         fused = self._rrf([vector_ids, lexical_ids, graph_ids])
         if not fused:
