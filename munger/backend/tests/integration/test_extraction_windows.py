@@ -499,3 +499,162 @@ def test_send_fanout_groups_windows():
     assert sends[0].arg["chunk_ids"] == [10, 20], f"Window 0 wrong: {sends[0].arg}"
     assert sends[1].arg["chunk_ids"] == [30, 40], f"Window 1 wrong: {sends[1].arg}"
     assert sends[2].arg["chunk_ids"] == [50], f"Window 2 (tail) wrong: {sends[2].arg}"
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — partial claim: non-consecutive claimed chunks form separate runs
+# ---------------------------------------------------------------------------
+
+
+def test_partial_claim_splits_into_runs_and_skips_unclaimed_text():
+    """3 consecutive chunks; middle one pre-marked 'running' (another worker owns it).
+
+    map_window([c0, c1, c2]) must:
+    - process runs [c0] and [c2] with SEPARATE extract calls
+    - each extract prompt contains ONLY that run's text (never c1's B-text)
+    - write ChunkExtraction rows for c0 and c2 only (c1 gets zero rows)
+    - leave c1 untouched (still 'running')
+    - mark c0 and c2 MAP_DONE
+
+    Content layout (90 chars):
+      c0: "A" * 30  doc_char [0,  30)  chunk_index=0
+      c1: "B" * 30  doc_char [30, 60)  chunk_index=1  ← pre-running, not claimed
+      c2: "C" * 30  doc_char [60, 90)  chunk_index=2
+
+    Script ordering (max_gleanings=0, 2 runs × 1 chunk each):
+      script[0]: "prefix0"       ← _contextual_prefix for c0
+      script[1]: extraction dict ← _extract_chunk(run [c0])
+      script[2]: "prefix2"       ← _contextual_prefix for c2
+      script[3]: extraction dict ← _extract_chunk(run [c2])
+    """
+    from sqlalchemy import update as sa_update
+
+    content_text = "A" * 30 + "B" * 30 + "C" * 30  # 90 chars
+    chunk_specs = [
+        (0,  0, 30),   # c0: chunk_index=0
+        (1, 30, 60),   # c1: chunk_index=1  — will be pre-marked running
+        (2, 60, 90),   # c2: chunk_index=2
+    ]
+    c1_text = "B" * 30  # must never appear in any extract prompt
+
+    class RecordingScriptedLLM(ScriptedLLMService):
+        """Captures every user-role message routed through chat()."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.captured_user_messages: list[str] = []
+
+        async def chat(self, messages: list[dict], **kwargs) -> str:
+            for m in messages:
+                if m.get("role") == "user":
+                    self.captured_user_messages.append(m["content"])
+            return await super().chat(messages, **kwargs)
+
+    scripts = [
+        "prefix0",       # script[0]: _contextual_prefix for c0
+        {                # script[1]: extraction for run [c0] (text = "A"*30)
+            "entities": [
+                {
+                    "name": "EntityA",
+                    "type": "concept",
+                    "description": "in c0",
+                    "char_start": 5,    # run-relative; offset_base=0 → doc-global=5
+                    "char_end": 10,
+                },
+            ],
+            "relationships": [],
+        },
+        "prefix2",       # script[2]: _contextual_prefix for c2
+        {                # script[3]: extraction for run [c2] (text = "C"*30)
+            "entities": [
+                {
+                    "name": "EntityC",
+                    "type": "concept",
+                    "description": "in c2",
+                    "char_start": 5,    # run-relative; offset_base=60 → doc-global=65
+                    "char_end": 10,
+                },
+            ],
+            "relationships": [],
+        },
+    ]
+
+    settings = _settings(max_gleanings=0)
+    llm = RecordingScriptedLLM(scripts=scripts)
+    chunk_svc = ChunkService(llm_service=llm, settings=settings)
+    svc = MapChunkService(llm_service=llm, chunk_service=chunk_svc, settings=settings)
+
+    async def _run():
+        source_id, chunk_ids = await _seed(content_text, chunk_specs)
+        c0_id, c1_id, c2_id = chunk_ids
+
+        # Pre-mark c1 as 'running' — simulates another worker having claimed it
+        async with async_session_maker() as session:
+            await session.execute(
+                sa_update(Chunk).where(Chunk.id == c1_id).values(map_status="running")
+            )
+            await session.commit()
+
+        result = await svc.map_window(chunk_ids, source_id)
+
+        # --- Return-value assertions ---
+        # 1 entity from c0's run + 1 entity from c2's run = 2 total
+        assert result.get("entities_raw") == 2, (
+            f"Expected 2 entities total (1 per run); got {result}"
+        )
+        assert result.get("relationships_raw") == 0
+        assert result.get("glean_entities_added") == 0
+        assert "skipped" not in result
+
+        # --- c1 text must NOT appear in any extract prompt ---
+        extract_msgs = [
+            m for m in llm.captured_user_messages if "Document offset base:" in m
+        ]
+        assert len(extract_msgs) == 2, (
+            f"Expected exactly 2 extract calls (one per claimed run); got {len(extract_msgs)}"
+        )
+        for msg in extract_msgs:
+            assert c1_text not in msg, (
+                f"c1 text ('B'*30) must not appear in any extract prompt; "
+                f"found in: {msg[:120]!r}"
+            )
+
+        # --- ChunkExtraction rows: c0 and c2 only, c1 untouched ---
+        async with async_session_maker() as session:
+            rows = list(
+                (
+                    await session.execute(
+                        select(ChunkExtraction).where(ChunkExtraction.source_id == source_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        row_chunk_ids = {r.chunk_id for r in rows}
+        assert c0_id in row_chunk_ids, "c0 must have a ChunkExtraction row"
+        assert c2_id in row_chunk_ids, "c2 must have a ChunkExtraction row"
+        assert c1_id not in row_chunk_ids, (
+            f"c1 (unclaimed) must have NO ChunkExtraction rows; found in {row_chunk_ids}"
+        )
+
+        # --- Chunk statuses ---
+        async with async_session_maker() as session:
+            chunks = {
+                c.id: c
+                for c in (
+                    await session.execute(select(Chunk).where(Chunk.source_id == source_id))
+                )
+                .scalars()
+                .all()
+            }
+        assert chunks[c0_id].map_status == MAP_DONE, (
+            f"c0 must be MAP_DONE; got {chunks[c0_id].map_status}"
+        )
+        assert chunks[c2_id].map_status == MAP_DONE, (
+            f"c2 must be MAP_DONE; got {chunks[c2_id].map_status}"
+        )
+        assert chunks[c1_id].map_status == "running", (
+            f"c1 must still be 'running' (untouched); got {chunks[c1_id].map_status}"
+        )
+
+    run_async(_run())

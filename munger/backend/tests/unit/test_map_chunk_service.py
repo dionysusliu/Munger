@@ -21,6 +21,7 @@ def _mock_settings():
     settings.ingest_chunk_worker_concurrency = 5
     settings.ingest_max_gleanings = 1
     settings.embedding_model = "test-embed"
+    settings.ingest_extraction_window_chunks = 1
     return settings
 
 

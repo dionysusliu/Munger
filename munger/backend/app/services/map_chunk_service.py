@@ -200,34 +200,38 @@ class MapChunkService:
         source_id: int,
         job_id: int | None = None,
     ) -> dict[str, int]:
-        """Process a window of consecutive chunks as ONE extraction call.
+        """Process a window of chunks as independent consecutive-run extraction calls.
 
         Algorithm
         ---------
         1. Claim each chunk via CAS (pending|failed → running). Skip those
            already owned by another worker. If NONE claimed, return skipped.
-        2. Load source.content_text; build window text as the doc slice
-           content_text[first.doc_char_start : last.doc_char_end] (overlap
-           appears exactly once).
-        3. For each claimed chunk, generate its contextual prefix (for embedding
-           quality). This step is done BEFORE extraction so that, for K=1, the
-           LLM call order matches the legacy map_single_chunk order
-           (prefix → extract → glean), keeping existing test scripts valid.
-        4. Extract the window with a single LLM call; offset base = first chunk's
-           doc_char_start so returned offsets are doc-global after += base.
-        5. Optional glean loop (glean_round=1) on the window text.
-        6. Demux: each entity is assigned to the FIRST claimed chunk whose
-           [doc_char_start, doc_char_end) contains its doc-global char_start.
-           Entities with char_start=None or out-of-range → first claimed chunk.
-           ALL relationships → first claimed chunk.
-        7. Write ChunkExtraction rows:
-           - Round 0: every claimed chunk gets a row (empty or not) so that
-             all_chunks_done() and the (chunk_id, glean_round) unique constraint
-             stay consistent with the reduce phase.
-           - Glean rounds (r > 0): only write rows that have content.
-           - Delete existing rows for claimed chunks before inserting (re-map safe).
-        8. Mark all claimed chunks MAP_DONE (with per-chunk embedding).
-           On any exception: mark all claimed chunks MAP_FAILED, re-raise.
+        2. Load source.content_text; split the claimed chunks into runs of
+           CONSECUTIVE chunk_index values. Gaps caused by unclaimed chunks
+           create separate runs — unclaimed chunks' doc ranges are never
+           included in any run's text.
+        3–7. Per-run loop (each run is processed and persisted independently):
+           3. For each chunk in the run, generate its contextual prefix.
+           4. Build run text = content_text[run_first.doc_char_start :
+              run_last.doc_char_end]; extract with a single LLM call; offset
+              base = run_first.doc_char_start so returned offsets become
+              doc-global after += base.
+              The run text is sliced from source.content_text (the same text
+              doc-global mention offsets are interpreted against — more consistent
+              than chunk.content, which is a token-decode snapshot; content_text
+              is written once at parse and never mutated).
+           5. Optional glean loop (glean_round=1) on the run text.
+           6. Demux: each entity is assigned to the FIRST chunk in the run
+              whose [doc_char_start, doc_char_end) contains its doc-global
+              char_start. Entities with char_start=None or out-of-range →
+              first chunk of the run. ALL relationships → first chunk of run.
+           7. Write ChunkExtraction rows + mark run chunks MAP_DONE atomically:
+              - Round 0: every chunk in the run gets a row (empty or not).
+              - Glean rounds (r > 0): only write rows that have content.
+              - Delete existing rows before inserting (re-map safe).
+           On run failure: mark that run's chunks MAP_FAILED; other runs
+           continue unaffected.
+        8. If no runs succeeded (all failed), re-raise the last exception.
         """
         if not chunk_ids:
             return {"entities_raw": 0, "relationships_raw": 0, "glean_entities_added": 0, "skipped": 0}
@@ -246,8 +250,8 @@ class MapChunkService:
                 "skipped": len(chunk_ids),
             }
 
+        # --- Step 2: load source + claimed chunks ---
         try:
-            # --- Step 2: load source + claimed chunks ---
             async with async_session_maker() as session:
                 source = await session.get(Source, source_id)
                 if source is None or not source.content_text:
@@ -269,156 +273,199 @@ class MapChunkService:
             if not claimed_chunks:
                 raise ValueError(f"Claimed chunk IDs {claimed_ids} not found in DB")
 
-            first_chunk = claimed_chunks[0]
-            last_chunk = claimed_chunks[-1]
-
-            # --- Step 3: contextual prefix for each chunk (before extraction) ---
-            chunk_prefixes: dict[int, str] = {}
-            for chunk in claimed_chunks:
-                prefix = await self.chunk_service._contextual_prefix(source_text, chunk.content)
-                chunk_prefixes[chunk.id] = prefix
-
-            # --- Step 4: build window text and extract ---
-            offset_base = first_chunk.doc_char_start
-            window_text = source_text[first_chunk.doc_char_start : last_chunk.doc_char_end]
-
-            # Duck-typed virtual chunk for _extract_chunk / _glean_loop
-            virtual_chunk = SimpleNamespace(
-                content=window_text,
-                doc_char_start=offset_base,
-                id=first_chunk.id,
-            )
-            round0 = await self._extract_chunk(virtual_chunk, source_text)
-
-            # --- Step 5: glean loop on the window ---
-            glean_rounds = await self._glean_loop(
-                virtual_chunk,
-                round0,
-                max_gleanings=self.settings.ingest_max_gleanings,
-            )
-
-            entities_raw = len(round0.entities)
-            relationships_raw = len(round0.relationships)
-            glean_added = sum(len(g.entities) for _, g in glean_rounds)
-
-            # --- Step 6: demux entities to per-chunk rows ---
-            chunk_ranges = [
-                (c.id, c.doc_char_start, c.doc_char_end) for c in claimed_chunks
-            ]
-            first_claimed_id = claimed_chunks[0].id
-
-            def _owning_chunk_id(char_start: int | None) -> int:
-                """First chunk whose [doc_char_start, doc_char_end) contains char_start."""
-                if char_start is None:
-                    return first_claimed_id
-                for cid, cstart, cend in chunk_ranges:
-                    if cstart <= char_start < cend:
-                        return cid
-                return first_claimed_id  # out-of-range → first chunk
-
-            all_rounds: list[tuple[int, ExtractionResult]] = [(0, round0)] + glean_rounds
-
-            # round_data[r][chunk_id] = (entities_list, relationships_list)
-            round_data: dict[int, dict[int, tuple[list, list]]] = {}
-            for r, result in all_rounds:
-                per_ents: dict[int, list] = {c.id: [] for c in claimed_chunks}
-                per_rels: dict[int, list] = {c.id: [] for c in claimed_chunks}
-                for ent in result.entities:
-                    owner = _owning_chunk_id(ent.char_start)
-                    per_ents[owner].append(ent.model_dump())
-                for rel in result.relationships:
-                    per_rels[first_claimed_id].append(rel.model_dump())
-                round_data[r] = {
-                    c.id: (per_ents[c.id], per_rels[c.id]) for c in claimed_chunks
-                }
-
-            # --- Step 7 (part A): embed each claimed chunk ---
-            chunk_embeddings: dict[int, list[float] | None] = {}
-            for chunk in claimed_chunks:
-                prefix = chunk_prefixes[chunk.id]
-                embed_body = f"{prefix}\n\n{chunk.content}" if prefix else chunk.content
-                embedding: list[float] | None = None
-                if self.llm:
-                    embeddings_list = await self.llm.embed_texts([embed_body])
-                    embedding = embeddings_list[0] if embeddings_list else None
-                if embedding is None and not self.settings.ingest_allow_null_embedding:
-                    raise ValueError(f"Embedding required for chunk {chunk.id}")
-                chunk_embeddings[chunk.id] = embedding
-
-            now = datetime.now(timezone.utc)
-
-            # --- Step 7 (part B): persist atomically ---
-            async with async_session_maker() as session:
-                # Delete-before-insert (re-map safe, mirrors single-chunk behaviour)
-                await session.execute(
-                    delete(ChunkExtraction).where(
-                        ChunkExtraction.chunk_id.in_(claimed_ids)
-                    )
-                )
-
-                # Round 0: every claimed chunk gets a row (empty rows too)
-                for chunk in claimed_chunks:
-                    ents, rels = round_data[0][chunk.id]
-                    session.add(
-                        ChunkExtraction(
-                            chunk_id=chunk.id,
-                            source_id=source_id,
-                            entities=ents,
-                            relationships=rels,
-                            glean_round=0,
-                        )
-                    )
-
-                # Glean rounds: only write rows that have content
-                for r, _ in glean_rounds:
-                    for chunk in claimed_chunks:
-                        ents, rels = round_data[r][chunk.id]
-                        if ents or rels:
-                            session.add(
-                                ChunkExtraction(
-                                    chunk_id=chunk.id,
-                                    source_id=source_id,
-                                    entities=ents,
-                                    relationships=rels,
-                                    glean_round=r,
-                                )
-                            )
-
-                # Mark all claimed chunks MAP_DONE
-                for chunk in claimed_chunks:
-                    prefix = chunk_prefixes[chunk.id]
-                    embedding = chunk_embeddings[chunk.id]
-                    await session.execute(
-                        update(Chunk)
-                        .where(Chunk.id == chunk.id)
-                        .values(
-                            contextual_prefix=prefix or None,
-                            embedding=embedding,
-                            embedding_model=(
-                                self.settings.embedding_model if embedding else None
-                            ),
-                            map_status=MAP_DONE,
-                            map_last_error=None,
-                            mapped_at=now,
-                            map_started_at=None,
-                        )
-                    )
-
-                if job_id is not None:
-                    await touch_job_heartbeat(session, job_id)
-
-                await session.commit()
-
-            return {
-                "entities_raw": entities_raw,
-                "relationships_raw": relationships_raw,
-                "glean_entities_added": glean_added,
-            }
-
         except Exception as exc:
             for cid in claimed_ids:
                 await mark_chunk_failed(cid, str(exc))
             raise
+
+        # --- Split claimed chunks into runs of consecutive chunk_index ---
+        # Unclaimed chunks create index gaps that break adjacency and start a new run.
+        runs: list[list[Chunk]] = []
+        current_run: list[Chunk] = [claimed_chunks[0]]
+        for chunk in claimed_chunks[1:]:
+            if chunk.chunk_index == current_run[-1].chunk_index + 1:
+                current_run.append(chunk)
+            else:
+                runs.append(current_run)
+                current_run = [chunk]
+        runs.append(current_run)
+
+        # --- Steps 3–7: process each run independently ---
+        total_entities_raw = 0
+        total_relationships_raw = 0
+        total_glean_added = 0
+        last_exc: Exception | None = None
+        successful_runs = 0
+
+        for run in runs:
+            try:
+                run_first = run[0]
+                run_last = run[-1]
+
+                # Step 3: contextual prefix for each chunk (before extraction so
+                # prefix→extract ordering is preserved for K=1, matching legacy tests)
+                chunk_prefixes: dict[int, str] = {}
+                for chunk in run:
+                    prefix = await self.chunk_service._contextual_prefix(
+                        source_text, chunk.content
+                    )
+                    chunk_prefixes[chunk.id] = prefix
+
+                # Step 4: build run text and extract
+                offset_base = run_first.doc_char_start
+                run_text = source_text[run_first.doc_char_start : run_last.doc_char_end]
+
+                virtual_chunk = SimpleNamespace(
+                    content=run_text,
+                    doc_char_start=offset_base,
+                    id=run_first.id,
+                )
+                round0 = await self._extract_chunk(virtual_chunk, source_text)
+
+                # Step 5: glean loop on the run text
+                glean_rounds = await self._glean_loop(
+                    virtual_chunk,
+                    round0,
+                    max_gleanings=self.settings.ingest_max_gleanings,
+                )
+
+                entities_raw = len(round0.entities)
+                relationships_raw = len(round0.relationships)
+                glean_added = sum(len(g.entities) for _, g in glean_rounds)
+
+                # Step 6: demux entities to per-chunk rows within this run
+                run_chunk_ranges = [
+                    (c.id, c.doc_char_start, c.doc_char_end) for c in run
+                ]
+                first_run_chunk_id = run[0].id
+
+                def _owning_chunk_id(char_start: int | None) -> int:
+                    """First run-chunk whose [doc_char_start, doc_char_end) contains char_start."""
+                    if char_start is None:
+                        return first_run_chunk_id
+                    for cid, cstart, cend in run_chunk_ranges:
+                        if cstart <= char_start < cend:
+                            return cid
+                    return first_run_chunk_id  # out-of-range → first chunk of run
+
+                all_rounds: list[tuple[int, ExtractionResult]] = [(0, round0)] + glean_rounds
+
+                # round_data[r][chunk_id] = (entities_list, relationships_list)
+                round_data: dict[int, dict[int, tuple[list, list]]] = {}
+                for r, result in all_rounds:
+                    per_ents: dict[int, list] = {c.id: [] for c in run}
+                    per_rels: dict[int, list] = {c.id: [] for c in run}
+                    for ent in result.entities:
+                        owner = _owning_chunk_id(ent.char_start)
+                        per_ents[owner].append(ent.model_dump())
+                    for rel in result.relationships:
+                        per_rels[first_run_chunk_id].append(rel.model_dump())
+                    round_data[r] = {
+                        c.id: (per_ents[c.id], per_rels[c.id]) for c in run
+                    }
+
+                # Step 7 (part A): embed each chunk in this run
+                chunk_embeddings: dict[int, list[float] | None] = {}
+                for chunk in run:
+                    prefix = chunk_prefixes[chunk.id]
+                    embed_body = f"{prefix}\n\n{chunk.content}" if prefix else chunk.content
+                    embedding: list[float] | None = None
+                    if self.llm:
+                        embeddings_list = await self.llm.embed_texts([embed_body])
+                        embedding = embeddings_list[0] if embeddings_list else None
+                    if embedding is None and not self.settings.ingest_allow_null_embedding:
+                        raise ValueError(f"Embedding required for chunk {chunk.id}")
+                    chunk_embeddings[chunk.id] = embedding
+
+                now = datetime.now(timezone.utc)
+
+                # Step 7 (part B): persist atomically for this run
+                async with async_session_maker() as session:
+                    # Delete-before-insert (re-map safe)
+                    await session.execute(
+                        delete(ChunkExtraction).where(
+                            ChunkExtraction.chunk_id.in_([c.id for c in run])
+                        )
+                    )
+
+                    # Round 0: every chunk in run gets a row (empty rows too)
+                    for chunk in run:
+                        ents, rels = round_data[0][chunk.id]
+                        session.add(
+                            ChunkExtraction(
+                                chunk_id=chunk.id,
+                                source_id=source_id,
+                                entities=ents,
+                                relationships=rels,
+                                glean_round=0,
+                            )
+                        )
+
+                    # Glean rounds: only write rows that have content
+                    for r, _ in glean_rounds:
+                        for chunk in run:
+                            ents, rels = round_data[r][chunk.id]
+                            if ents or rels:
+                                session.add(
+                                    ChunkExtraction(
+                                        chunk_id=chunk.id,
+                                        source_id=source_id,
+                                        entities=ents,
+                                        relationships=rels,
+                                        glean_round=r,
+                                    )
+                                )
+
+                    # Mark run chunks MAP_DONE
+                    for chunk in run:
+                        prefix = chunk_prefixes[chunk.id]
+                        embedding = chunk_embeddings[chunk.id]
+                        await session.execute(
+                            update(Chunk)
+                            .where(Chunk.id == chunk.id)
+                            .values(
+                                contextual_prefix=prefix or None,
+                                embedding=embedding,
+                                embedding_model=(
+                                    self.settings.embedding_model if embedding else None
+                                ),
+                                map_status=MAP_DONE,
+                                map_last_error=None,
+                                mapped_at=now,
+                                map_started_at=None,
+                            )
+                        )
+
+                    if job_id is not None:
+                        await touch_job_heartbeat(session, job_id)
+
+                    await session.commit()
+
+                total_entities_raw += entities_raw
+                total_relationships_raw += relationships_raw
+                total_glean_added += glean_added
+                successful_runs += 1
+
+            except Exception as exc:
+                last_exc = exc
+                for chunk in run:
+                    await mark_chunk_failed(chunk.id, str(exc))
+                logger.warning(
+                    "map_window run %s (source=%s) failed: %s",
+                    [c.id for c in run],
+                    source_id,
+                    exc,
+                )
+
+        # Re-raise if no run succeeded (preserves fail-fast behaviour for single-run windows)
+        if successful_runs == 0 and last_exc is not None:
+            raise last_exc
+
+        return {
+            "entities_raw": total_entities_raw,
+            "relationships_raw": total_relationships_raw,
+            "glean_entities_added": total_glean_added,
+        }
 
     # ------------------------------------------------------------------
     # Single-chunk wrapper (preserves legacy contract for existing callers)
@@ -529,10 +576,7 @@ class MapChunkService:
                 "duration_ms": 0,
             }
 
-        # Resolve window size; guard against MagicMock in unit-test mock settings
         K = self.settings.ingest_extraction_window_chunks
-        if not isinstance(K, int) or K < 1:
-            K = 1
 
         def _group_into_windows(chunks_list: list[Chunk], k: int) -> list[list[Chunk]]:
             """Group consecutive-index chunks into windows of at most k."""
