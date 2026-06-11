@@ -2,6 +2,8 @@
 
 import pytest
 
+pytestmark = pytest.mark.no_db
+
 from app.prompts import ENTITY_TYPE_NAMES, LEGACY_TYPE_MAPPING
 from app.services.entity_service import EntityService
 

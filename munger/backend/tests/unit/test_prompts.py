@@ -1,5 +1,9 @@
 """Unit tests for the centralized prompt module (app/prompts/)."""
 
+import pytest
+
+pytestmark = pytest.mark.no_db
+
 from app.prompts.ontology import (
     ALIAS_TYPE_MAPPING,
     ENTITY_TYPE_NAMES,

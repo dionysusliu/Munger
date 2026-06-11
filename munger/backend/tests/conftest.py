@@ -66,7 +66,7 @@ async def _truncate_all_tables() -> None:
         await conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _run_migrations_once():
     from app.db.migrate import run_migrations
 
@@ -75,7 +75,7 @@ def _run_migrations_once():
 
 
 @pytest.fixture(scope="session")
-def client():
+def client(_run_migrations_once):
     _reset_data_dirs()
     run_async(_truncate_all_tables())
     with TestClient(app) as test_client:
@@ -83,7 +83,11 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def reset_state():
+def reset_state(request):
+    if request.node.get_closest_marker("no_db"):
+        yield
+        return
+    request.getfixturevalue("_run_migrations_once")
     _reset_data_dirs()
     run_async(_truncate_all_tables())
     yield
