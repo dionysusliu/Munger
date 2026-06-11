@@ -10,6 +10,13 @@ import httpx
 
 from app.core.config import OLLAMA_ONLY_EMBEDDING_MODELS, Settings
 from app.observability.langsmith_setup import trace_llm
+from app.prompts import (
+    ENTITY_TYPE_NAMES,
+    NAMING_RULES,
+    SUGGEST_LINKS_SYSTEM,
+    build_wiki_system,
+    ontology_block,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -733,15 +740,17 @@ class LLMService:
     async def extract_entities(self, text: str) -> list[dict]:
         """Extract named entities from text with types and descriptions."""
         truncated = self.provider._truncate_text(text, 10000)
+        type_choices = "|".join(ENTITY_TYPE_NAMES)
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "Extract named entities from the following text. "
+                    "Extract named entities from the following text.\n"
+                    f"{ontology_block()}\n\n"
+                    f"{NAMING_RULES}\n\n"
                     "Return ONLY a JSON array of objects with this exact format:\n"
-                    '[{"name": "Entity Name", "type": "person|concept|model|'
-                    'mechanism|incentive_structure|book|paper|organization|'
-                    'field|event|principle", "description": "Brief description"}]\n'
+                    f'[{{"name": "Entity Name", "type": "{type_choices}", '
+                    '"description": "Brief description"}]\n'
                     "Include only the most important and frequently mentioned entities. "
                     "Return ONLY the JSON array, no other text."
                 ),
@@ -805,29 +814,8 @@ class LLMService:
     ) -> str:
         """Generate wiki page content from source material."""
         truncated = self.provider._truncate_text(content, 12000)
-        type_prompts = {
-            "summary": "Create a well-structured summary wiki page.",
-            "entity": "Create a detailed entity wiki page with background, significance, and related concepts.",
-            "concept": "Create a concept wiki page with definition, examples, and related mental models.",
-            "model": "Create a mental model wiki page with explanation, examples, and applications.",
-            "mechanism": "Create a mechanism wiki page explaining how it works with causal chains.",
-            "incentive": "Create an incentive structure wiki page with stakeholder analysis.",
-            "psychology": "Create a psychology wiki page about cognitive biases and mental patterns.",
-            "analysis": "Create an analysis wiki page with structured reasoning.",
-        }
-        prompt = type_prompts.get(
-            page_type, "Create a well-structured wiki page in markdown format."
-        )
         messages = [
-            {
-                "role": "system",
-                "content": (
-                    f"You are a wiki editor. {prompt}\n"
-                    "Use markdown formatting with headers, lists, and links.\n"
-                    "Use [[Page Name]] syntax for internal wiki links where relevant.\n"
-                    f"Title: {title}"
-                ),
-            },
+            {"role": "system", "content": build_wiki_system(title, page_type)},
             {"role": "user", "content": truncated},
         ]
         try:
@@ -849,16 +837,7 @@ class LLMService:
         truncated_content = self.provider._truncate_text(page_content, 5000)
 
         messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Suggest relevant wiki links from the given page content to existing pages.\n"
-                    "Return ONLY a JSON array of objects:\n"
-                    '[{"to_page_id": 1, "link_type": "reference|contradicts|supports|relates", '
-                    '"context": "Why this link is relevant"}]\n'
-                    "Only suggest genuinely relevant connections. Return ONLY the JSON array."
-                ),
-            },
+            {"role": "system", "content": SUGGEST_LINKS_SYSTEM},
             {
                 "role": "user",
                 "content": f"Page content:\n{truncated_content}\n\nExisting pages:\n{pages_text}",
