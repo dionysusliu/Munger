@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.services.graph_gc_service import GraphGCService
@@ -12,7 +12,8 @@ router = APIRouter()
 
 
 class DeleteRequest(BaseModel):
-    entity_ids: list[int]
+    # Explicit HITL deletion — may include mentioned entities by deliberate user choice.
+    entity_ids: list[int] = Field(..., max_length=500)
 
 
 @router.get("/candidates")

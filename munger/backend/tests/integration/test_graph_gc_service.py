@@ -133,3 +133,24 @@ def test_gc_candidates_low_value_only_and_never_human_touched():
     assert human_rel_id not in ids
     junk_row = next(c for c in cands if c["entity_id"] == junk_id)
     assert {"entity_id", "name", "entity_type", "mention_count", "salience"} <= set(junk_row.keys())
+
+
+def test_prune_orphans_never_deletes_human_labeled():
+    """An entity with zero mentions/relationships but a labeled_pairs row is human-touched -> kept."""
+    async def _setup():
+        async with async_session_maker() as s:
+            kept = Entity(name="LabeledOrphan", entity_type="concept", mention_count=0)
+            other = Entity(name="OtherSide", entity_type="concept", mention_count=1)
+            s.add_all([kept, other]); await s.flush()
+            s.add(EntityMention(entity_id=other.id, context="o"))
+            lo, hi = sorted([kept.id, other.id])
+            await s.execute(text(
+                "INSERT INTO labeled_pairs (entity_a_id, entity_b_id, label) VALUES (:a,:b,'reject')"),
+                {"a": lo, "b": hi})
+            await s.commit()
+            return kept.id
+
+    kept_id = run_async(_setup())
+    assert kept_id not in run_async(_svc().find_orphans())
+    run_async(_svc().prune_orphans())
+    assert run_async(_exists(kept_id)), "human-labeled entity must survive auto-prune"

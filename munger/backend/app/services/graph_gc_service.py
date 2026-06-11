@@ -21,6 +21,8 @@ _ORPHANS_SQL = """
       AND NOT EXISTS (SELECT 1 FROM entity_relationships r
                       WHERE r.source_entity_id = e.id OR r.target_entity_id = e.id)
       AND NOT EXISTS (SELECT 1 FROM entities c WHERE c.canonical_entity_id = e.id)
+      AND NOT EXISTS (SELECT 1 FROM labeled_pairs lp
+                      WHERE lp.entity_a_id = e.id OR lp.entity_b_id = e.id)
 """
 
 
@@ -29,7 +31,8 @@ class GraphGCService:
         self.settings = settings or get_settings()
 
     async def find_orphans(self) -> list[int]:
-        """Entities referenced by NOTHING: no mentions, no relationships, no merge members."""
+        """Entities referenced by NOTHING: no mentions, no relationships, no merge members,
+        and never human-labeled (labeled_pairs would CASCADE away silently otherwise)."""
         async with async_session_maker() as s:
             rows = (await s.execute(text(_ORPHANS_SQL))).all()
         return [r[0] for r in rows]
