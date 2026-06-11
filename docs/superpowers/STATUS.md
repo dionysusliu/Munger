@@ -4,7 +4,7 @@ Single entry point for resuming work. Last updated 2026-06-10.
 
 ## Where things are
 
-**Branch:** `claude/amazing-faraday-8ea246` (worktree: `.claude/worktrees/amazing-faraday-8ea246`). Open as **PR #3** → https://github.com/dionysusliu/Munger/pull/3 (36 commits ahead of `main`).
+**Branch:** `worktree-sp2.2-entity-resolution` (worktree: `.claude/worktrees/sp2.2-entity-resolution`). **PR #3 was merged early at `609a725` (index audit) — `main` LACKS SP3.1 + SP2.2.** This branch carries the SP3.1 + SP2.2 delta off `main`; a fresh PR brings them in.
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **102 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **115 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 ## Design spec (north-star)
 
@@ -26,7 +26,7 @@ Current: **102 passed** (the 2 ignored tests need OpenRouter creds / a built fro
 | `2026-06-09-sp1-dbos-spine-foundation.md` | ✅ DONE — DBOS spine behind `INGEST_ORCHESTRATOR=dbos` |
 | `2026-06-10-sp2.1-graph-edges-foundation.md` | ✅ DONE — `entity_edges` + `EdgeService` (mig 007) |
 | `2026-06-10-sp2.3-salience-communities.md` | ✅ DONE — `GraphService` PageRank+Louvain (mig 008) |
-| **SP2.2** (entity resolution) | ⏳ TODO — write plan: block(pgvector ANN)→score→cluster → fill `entities.canonical_entity_id` + new `labeled_pairs`; reversible/HITL |
+| `2026-06-10-sp2.2-entity-resolution.md` | ✅ DONE — `EntityResolutionService`: block(trgm)→score→cluster → soft-merge `canonical_entity_id` + `labeled_pairs` HITL + `unmerge` + `_flatten_chains` (mig 010); `POST /api/entities/{resolve,unmerge,label}` |
 | **SP2.3b** (community reports) | ⏳ TODO — LLM summaries + bm25/tfidf topic-labels (txtai-style) per community → GraphRAG global search |
 | `2026-06-10-sp3.1-retrieval.md` | ✅ DONE — `RetrievalService`: link + 3-channel (vector/lexical/graph-PPR) + RRF + salience rerank + assemble; `GET /api/search/retrieve` |
 | **SP3.2** (vector entity-linking) | ⏳ TODO — `entities.embedding` HNSW (migration) + vector seed-linking + canonical-aware retrieval (COALESCE) |
@@ -48,6 +48,7 @@ Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy
 - Models: `app/models/entity_edge.py`, `app/models/community.py`; `entities.salience`/`canonical_entity_id`/`community_id`
 - Migrations: `alembic/versions/007_*` (entity_edges), `008_*` (communities), `009_*` (index audit)
 - Retrieval (SP3.1): `app/services/retrieval_service.py` (link + vector/lexical/graph-PPR + RRF + assemble), `GraphService.personalized_pagerank`, `app/api/retrieval.py` (`GET /api/search/retrieve`), `RuntimeServices.retrieval`
+- Resolution (SP2.2): `app/services/entity_resolution_service.py` (block/score/resolve/unmerge/label + `_flatten_chains`), `app/models/labeled_pair.py` (mig 010), `app/api/resolution.py`, `RuntimeServices.entity_resolution`
 
 ## Deferred / scale (per the txtai review)
 
@@ -57,4 +58,4 @@ Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy
 
 - New ingest behavior stays behind a flag / additive; default `INGEST_ORCHESTRATOR=graph` unchanged.
 - Migrations are **migration-only** (don't add new model-declared indexes — the project applies migrations incrementally on a persisted test DB; from-scratch `001` uses `create_all`).
-- Per-SP: write plan → execute (subagent-driven, full review on SQL/logic-heavy tasks) → commit → push to PR #3.
+- Per-SP: write plan → execute (subagent-driven, full review on SQL/logic-heavy tasks) → commit → push → PR per branch. (PR #3 was merged early at index-audit; SP3.1 + SP2.2 land via the next PR off `main`.)
