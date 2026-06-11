@@ -77,25 +77,27 @@ class ChatService:
         answer = await self.llm.chat(messages)
 
         citations = [{"entity_id": r["entity_id"], "name": r["name"], "wiki": r.get("wiki")} for r in results]
-        await self._persist(session_id, message, answer, citations, bridge)
-        return {"session_id": session_id, "answer": answer, "citations": citations, "bridge": bridge}
+        assistant_message_id = await self._persist(session_id, message, answer, citations, bridge)
+        return {"session_id": session_id, "answer": answer, "citations": citations,
+                "bridge": bridge, "assistant_message_id": assistant_message_id}
 
     async def _persist(self, session_id: int, user_msg: str, answer: str,
-                       citations: list[dict], bridge: list[int]) -> None:
+                       citations: list[dict], bridge: list[int]) -> int:
         async with async_session_maker() as s:
             await s.execute(
                 text("INSERT INTO chat_messages (session_id, role, content) VALUES (:sid, 'user', :c)"),
                 {"sid": session_id, "c": user_msg})
-            await s.execute(
+            row = (await s.execute(
                 text("INSERT INTO chat_messages (session_id, role, content, citations) "
-                     "VALUES (:sid, 'assistant', :c, :cit)"),
+                     "VALUES (:sid, 'assistant', :c, :cit) RETURNING id"),
                 {"sid": session_id, "c": answer,
-                 "cit": json.dumps({"citations": citations, "bridge": bridge})})
+                 "cit": json.dumps({"citations": citations, "bridge": bridge})})).first()
             await s.commit()
+            return row[0]
 
     async def messages(self, session_id: int) -> list[dict]:
         async with async_session_maker() as s:
             rows = (await s.execute(
-                text("SELECT role, content, citations FROM chat_messages WHERE session_id = :sid ORDER BY id"),
+                text("SELECT id, role, content, citations FROM chat_messages WHERE session_id = :sid ORDER BY id"),
                 {"sid": session_id})).all()
-        return [{"role": r[0], "content": r[1], "meta": json.loads(r[2]) if r[2] else None} for r in rows]
+        return [{"id": r[0], "role": r[1], "content": r[2], "meta": json.loads(r[3]) if r[3] else None} for r in rows]
