@@ -30,7 +30,7 @@ class RetrievalService:
         self.graph = graph_service or GraphService(self.settings)
 
     async def link_seeds(self, query: str, limit: int = 5, query_vec: list[float] | None = None) -> list[int]:
-        """Seed entities (resolved to canonical) for the graph channel: name match (+ vector ANN in Task 2)."""
+        """Seed entities (canonical) for the graph channel: name match + optional vector ANN (entities HNSW)."""
         tokens = [t for t in query.lower().split() if t]
         async with async_session_maker() as s:
             rows = (await s.execute(
@@ -44,7 +44,22 @@ class RetrievalService:
                 """),
                 {"tokens": tokens or [""], "pat": f"%{query}%", "lim": limit},
             )).all()
-        return [r[0] for r in rows]
+            seeds: list[int] = [r[0] for r in rows]
+            if query_vec is not None:
+                vec_rows = (await s.execute(
+                    text("""
+                        SELECT COALESCE(canonical_entity_id, id) AS cid
+                        FROM entities
+                        WHERE embedding IS NOT NULL
+                        ORDER BY embedding <=> CAST(:vec AS vector)
+                        LIMIT :lim
+                    """),
+                    {"vec": _vec_literal(query_vec), "lim": limit},
+                )).all()
+                for (cid,) in vec_rows:
+                    if cid not in seeds:
+                        seeds.append(cid)
+        return seeds
 
     async def _vector_entities(self, query_vec: list[float], limit: int = 20) -> list[int]:
         """Chunk ANN -> entity_mentions -> entity_ids, ranked by best (min) cosine distance."""
@@ -126,8 +141,8 @@ class RetrievalService:
 
     async def search(self, query: str, k: int = 20, salience_weight: float = 0.5) -> list[dict]:
         """Entity-centric retrieval: link -> recall(3) -> RRF -> salience rerank -> assemble top-k."""
-        seeds = await self.link_seeds(query)
         qvec = await self._embed_query(query)
+        seeds = await self.link_seeds(query, query_vec=qvec)
 
         vector_ids = await self._vector_entities(qvec) if qvec is not None else []
         lexical_ids = await self._lexical_entities(query)
