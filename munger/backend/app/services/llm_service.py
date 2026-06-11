@@ -85,6 +85,10 @@ class LLMProvider(ABC):
         """Return the maximum context token limit for this provider."""
         ...
 
+    async def chat_stream(self, messages: list[dict], **kwargs):
+        """Yield answer text increments. Base fallback: one chunk from chat()."""
+        yield await self.chat(messages, **kwargs)
+
     def _truncate_text(self, text: str, max_chars: int = 10000) -> str:
         """Truncate text to fit within context limits."""
         if len(text) <= max_chars:
@@ -270,6 +274,35 @@ class OpenRouterProvider(OpenAIProvider):
         except Exception as e:
             logger.error("OpenRouter embedding error (model=%s): %s", self.embedding_model, e)
             raise LLMError(f"OpenRouter embedding failed (model={self.embedding_model}): {e}") from e
+
+
+    async def chat_stream(self, messages: list[dict], **kwargs):
+        """Stream chat completions from OpenRouter via SSE."""
+        client = self._get_client()
+        payload = {
+            "model": kwargs.get("model", self.model),
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "stream": True,
+        }
+        try:
+            async with client.stream("POST", "/chat/completions", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    chunk = line[6:].strip()
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(chunk)["choices"][0].get("delta", {}).get("content")
+                    except (KeyError, IndexError, json.JSONDecodeError):
+                        continue
+                    if delta:
+                        yield delta
+        except httpx.HTTPStatusError as e:
+            raise LLMError(f"OpenRouter stream error: {e.response.status_code}") from e
 
 
 class KimiProvider(OpenAIProvider):
@@ -579,6 +612,11 @@ class LLMService:
     async def chat(self, messages: list[dict], **kwargs) -> str:
         """Send a chat request to the configured provider."""
         return await self.provider.chat(messages, **kwargs)
+
+    async def chat_stream(self, messages: list[dict], **kwargs):
+        """Stream chat increments from the configured provider."""
+        async for piece in self.provider.chat_stream(messages, **kwargs):
+            yield piece
 
     @trace_llm(name="llm_embed", run_type="embedding")
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
