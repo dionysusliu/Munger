@@ -2,8 +2,6 @@
 
 import pytest
 
-pytestmark = pytest.mark.no_db
-
 from app.prompts.ontology import (
     ALIAS_TYPE_MAPPING,
     ENTITY_TYPE_NAMES,
@@ -22,6 +20,8 @@ from app.prompts.wiki import (
     WIKI_TYPE_PROMPTS,
     build_wiki_system,
 )
+
+pytestmark = pytest.mark.no_db
 
 
 class TestOntologyVocabulary:

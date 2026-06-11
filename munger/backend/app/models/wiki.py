@@ -16,9 +16,8 @@ class WikiPage(Base):
     slug: Mapped[str] = mapped_column(String(500), unique=True, index=True)
     content: Mapped[str] = mapped_column(Text, default="")
     page_type: Mapped[str] = mapped_column(String(50), default="summary")
-    # summary, entity, concept, model, mechanism, incentive, incentive_structure,
-    # psychology, comparison, analysis, overview, index, log, person, book, paper,
-    # organization, field, event, principle
+    # 7-type ontology (see app/prompts/ontology.py): person, organization, work,
+    # concept, mental_model, mechanism, event — plus summary/index for non-entity pages
     source_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("sources.id"), nullable=True
     )
