@@ -8,6 +8,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   BookMarked,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -20,6 +21,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { label: 'Wiki', icon: BookOpen, path: '/wiki' },
+  { label: 'Chat', icon: MessageSquare, path: '/chat' },
   { label: 'Ingest', icon: Upload, path: '/ingest' },
 ];
 

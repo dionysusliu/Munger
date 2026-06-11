@@ -249,3 +249,56 @@ export async function getRelatedWikiPages(pageId: number): Promise<RelatedWikiPa
 export async function getStats(): Promise<StatsResponse> {
   return apiFetch<StatsResponse>('/api/stats');
 }
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+
+export interface ChatCitation {
+  entity_id: number;
+  name: string;
+  wiki: { slug: string; title: string } | null;
+}
+
+export interface ChatAskResponse {
+  session_id: number;
+  answer: string;
+  citations: ChatCitation[];
+  bridge: number[];
+  assistant_message_id: number;
+}
+
+export interface ChatHistoryMessage {
+  id: number;
+  role: string;
+  content: string;
+  meta: { citations: ChatCitation[]; bridge: number[] } | null;
+}
+
+export interface ChatHistoryResponse {
+  session_id: number;
+  messages: ChatHistoryMessage[];
+}
+
+export async function chatSend(message: string, sessionId?: number): Promise<ChatAskResponse> {
+  return apiFetch<ChatAskResponse>('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, session_id: sessionId }),
+    timeoutMs: 120_000,
+  });
+}
+
+export async function chatMessages(sessionId: number): Promise<ChatHistoryResponse> {
+  return apiFetch<ChatHistoryResponse>(`/api/chat/sessions/${sessionId}/messages`);
+}
+
+export async function feedbackRate(
+  messageId: number,
+  rating: 1 | -1,
+  note?: string,
+): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>('/api/feedback/rate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message_id: messageId, rating, note }),
+  });
+}

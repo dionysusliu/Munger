@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import WikiBrowser from './pages/WikiBrowser';
 import WikiPage from './pages/WikiPage';
 import Ingest from './pages/Ingest';
+import Chat from './pages/Chat';
 
 function App() {
   return (
@@ -12,6 +13,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/chat" element={<Chat />} />
           <Route path="/ingest" element={<Ingest />} />
           <Route path="/wiki" element={<WikiBrowser />} />
           <Route path="/wiki/:slug" element={<WikiPage />} />
