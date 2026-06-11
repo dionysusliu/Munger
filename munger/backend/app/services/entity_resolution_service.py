@@ -62,6 +62,7 @@ class EntityResolutionService:
     def _score_pair(self, a: Entity, b: Entity, adj: dict[int, set[int]]) -> float:
         parts: list[tuple[float, float]] = [(fuzz.token_set_ratio(a.name, b.name) / 100.0, W_NAME)]
         if a.embedding is not None and b.embedding is not None:
+            # clamp anti-similarity (negative cosine) to 0 — treat as "no signal", not evidence against
             parts.append((max(0.0, _cosine(list(a.embedding), list(b.embedding))), W_EMB))
         na, nb = adj.get(a.id, set()), adj.get(b.id, set())
         if na or nb:
@@ -76,6 +77,8 @@ class EntityResolutionService:
         async with async_session_maker() as s:
             a = await s.get(Entity, a_id)
             b = await s.get(Entity, b_id)
+        if a is None or b is None:
+            return 0.0
         return self._score_pair(a, b, adj)
 
     async def label_pair(self, a_id: int, b_id: int, label: str, note: str | None = None) -> None:
@@ -153,8 +156,29 @@ class EntityResolutionService:
                         merged += 1
             await s.commit()
 
+        await self._flatten_chains()
         clusters = nx.number_connected_components(g) if g.number_of_nodes() else 0
         return {"candidates": len(candidates), "merged": merged, "clusters": clusters}
+
+    async def _flatten_chains(self) -> None:
+        """Collapse canonical_entity_id chains so every member points directly to its root.
+
+        Cross-run merges can create B->A then A->D; EdgeService's single COALESCE hop would
+        mis-resolve B. Re-point one hop at a time until no pointer targets another pointer.
+        Terminates: a canonical always ranks above its members, so pointers form a cycle-free forest.
+        """
+        async with async_session_maker() as s:
+            while True:
+                res = await s.execute(text("""
+                    UPDATE entities AS child
+                    SET canonical_entity_id = parent.canonical_entity_id
+                    FROM entities AS parent
+                    WHERE child.canonical_entity_id = parent.id
+                      AND parent.canonical_entity_id IS NOT NULL
+                """))
+                await s.commit()
+                if not res.rowcount:
+                    break
 
     async def unmerge(self, entity_id: int) -> int:
         """Reverse a soft-merge: clear this entity's pointer AND release any members pointing to it."""

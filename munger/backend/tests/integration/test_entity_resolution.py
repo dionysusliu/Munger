@@ -67,6 +67,34 @@ def test_labeled_match_forces_merge_below_threshold():
     assert run_async(_canon(b_id)) == a_id
 
 
+def test_resolve_flattens_cross_run_chains():
+    """A second resolve that merges a former canonical must not leave a B->A->D chain."""
+    async def _setup():
+        async with async_session_maker() as s:
+            a = Entity(name="Acme Corp", entity_type="organization", mention_count=5)
+            b = Entity(name="Acme Corp.", entity_type="organization", mention_count=2)
+            s.add(a); s.add(b); await s.commit()
+            return a.id, b.id
+
+    a_id, b_id = run_async(_setup())
+    run_async(_svc().resolve(tau_block=0.4, tau_auto=0.55))
+    assert run_async(_canon(b_id)) == a_id  # run 1: B -> A
+
+    async def _add_d():
+        async with async_session_maker() as s:
+            d = Entity(name="Acme Corp Inc", entity_type="organization", mention_count=20)
+            s.add(d); await s.commit()
+            return d.id
+
+    d_id = run_async(_add_d())
+    run_async(_svc().resolve(tau_block=0.4, tau_auto=0.55))  # run 2: A -> D (D higher mention)
+
+    # No chain: B and A must point DIRECTLY to the root D, and D's own canonical is NULL.
+    assert run_async(_canon(a_id)) == d_id
+    assert run_async(_canon(b_id)) == d_id, "B->A->D chain was not flattened"
+    assert run_async(_canon(d_id)) is None
+
+
 def test_unmerge_reverses():
     async def _setup():
         async with async_session_maker() as s:
