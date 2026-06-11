@@ -4,7 +4,7 @@ Single entry point for resuming work. Last updated 2026-06-10.
 
 ## Where things are
 
-**Branch:** `claude/amazing-faraday-8ea246` (worktree: `.claude/worktrees/amazing-faraday-8ea246`). Open as **PR #3** → https://github.com/dionysusliu/Munger/pull/3 (30 commits ahead of `main`).
+**Branch:** `claude/amazing-faraday-8ea246` (worktree: `.claude/worktrees/amazing-faraday-8ea246`). Open as **PR #3** → https://github.com/dionysusliu/Munger/pull/3 (36 commits ahead of `main`).
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **93 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **102 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 ## Design spec (north-star)
 
@@ -28,7 +28,9 @@ Current: **93 passed** (the 2 ignored tests need OpenRouter creds / a built fron
 | `2026-06-10-sp2.3-salience-communities.md` | ✅ DONE — `GraphService` PageRank+Louvain (mig 008) |
 | **SP2.2** (entity resolution) | ⏳ TODO — write plan: block(pgvector ANN)→score→cluster → fill `entities.canonical_entity_id` + new `labeled_pairs`; reversible/HITL |
 | **SP2.3b** (community reports) | ⏳ TODO — LLM summaries + bm25/tfidf topic-labels (txtai-style) per community → GraphRAG global search |
-| **SP3** (retrieval) | ⏳ TODO — multi-channel recall (PPR over `entity_edges` + vector + BM25) → rerank (salience/recency) → entity-centric assembly. salience+edges+communities all ready |
+| `2026-06-10-sp3.1-retrieval.md` | ✅ DONE — `RetrievalService`: link + 3-channel (vector/lexical/graph-PPR) + RRF + salience rerank + assemble; `GET /api/search/retrieve` |
+| **SP3.2** (vector entity-linking) | ⏳ TODO — `entities.embedding` HNSW (migration) + vector seed-linking + canonical-aware retrieval (COALESCE) |
+| **SP4** (chat over retrieval) | ⏳ TODO — conservative read-write chat; smolagents candidate; structural-hole bridging via `showpath`/`betweenness` |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
 
@@ -45,6 +47,7 @@ Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy
 - Entity graph: `app/services/edge_service.py` (rebuild_all/update_for_source/top_neighbors), `app/services/graph_service.py` (NetworkX pagerank/communities; interface mirrors txtai's `Graph`, extend with showpath/centrality for SP4 bridging)
 - Models: `app/models/entity_edge.py`, `app/models/community.py`; `entities.salience`/`canonical_entity_id`/`community_id`
 - Migrations: `alembic/versions/007_*` (entity_edges), `008_*` (communities), `009_*` (index audit)
+- Retrieval (SP3.1): `app/services/retrieval_service.py` (link + vector/lexical/graph-PPR + RRF + assemble), `GraphService.personalized_pagerank`, `app/api/retrieval.py` (`GET /api/search/retrieve`), `RuntimeServices.retrieval`
 
 ## Deferred / scale (per the txtai review)
 
