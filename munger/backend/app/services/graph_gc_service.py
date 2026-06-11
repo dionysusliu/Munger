@@ -83,3 +83,25 @@ class GraphGCService:
         orphans = await self.find_orphans()
         out = await self.delete_entities(orphans)
         return {"orphans_found": len(orphans), "deleted": out["deleted"]}
+
+    async def gc_candidates(self, max_mentions: int = 1, limit: int = 100) -> list[dict]:
+        """LIST low-value deletion candidates (HITL — never auto-deleted).
+
+        Excluded forever: anything human-touched (labeled_pairs or a method='human'
+        relationship) and canonical roots. Ordered worst-salience-first."""
+        async with async_session_maker() as s:
+            rows = (await s.execute(text("""
+                SELECT e.id, e.name, e.entity_type, e.mention_count, COALESCE(e.salience, 0.0)
+                FROM entities e
+                WHERE e.mention_count <= :mm
+                  AND NOT EXISTS (SELECT 1 FROM entities c WHERE c.canonical_entity_id = e.id)
+                  AND NOT EXISTS (SELECT 1 FROM labeled_pairs lp
+                                  WHERE lp.entity_a_id = e.id OR lp.entity_b_id = e.id)
+                  AND NOT EXISTS (SELECT 1 FROM entity_relationships r
+                                  WHERE r.method = 'human'
+                                    AND (r.source_entity_id = e.id OR r.target_entity_id = e.id))
+                ORDER BY COALESCE(e.salience, 0.0) ASC, e.mention_count ASC, e.id ASC
+                LIMIT :lim
+            """), {"mm": max_mentions, "lim": limit})).all()
+        return [{"entity_id": r[0], "name": r[1], "entity_type": r[2],
+                 "mention_count": r[3], "salience": float(r[4])} for r in rows]

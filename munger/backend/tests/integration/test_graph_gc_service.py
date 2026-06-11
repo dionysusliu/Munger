@@ -102,3 +102,34 @@ def test_prune_orphans_end_to_end():
     assert out["deleted"] >= 1
     assert not run_async(_exists(a_id))
     assert run_async(_exists(b_id))
+
+
+def test_gc_candidates_low_value_only_and_never_human_touched():
+    async def _setup():
+        async with async_session_maker() as s:
+            junk = Entity(name="Figure 3", entity_type="concept", mention_count=1, salience=0.0)
+            hot = Entity(name="Chord", entity_type="model", mention_count=16, salience=0.9)
+            labeled = Entity(name="LabeledOne", entity_type="concept", mention_count=1, salience=0.0)
+            partner = Entity(name="Partner", entity_type="concept", mention_count=9, salience=0.5)
+            human_rel = Entity(name="HumanRel", entity_type="concept", mention_count=1, salience=0.0)
+            s.add_all([junk, hot, labeled, partner, human_rel]); await s.flush()
+            lo, hi = sorted([labeled.id, partner.id])
+            await s.execute(text(
+                "INSERT INTO labeled_pairs (entity_a_id, entity_b_id, label) VALUES (:a,:b,'reject')"),
+                {"a": lo, "b": hi})
+            await s.execute(text(
+                "INSERT INTO entity_relationships (source_entity_id, target_entity_id, relationship_type, "
+                "confidence, method, created_at) VALUES (:a,:b,'related',1.0,'human',now())"),
+                {"a": human_rel.id, "b": partner.id})
+            await s.commit()
+            return junk.id, hot.id, labeled.id, human_rel.id
+
+    junk_id, hot_id, labeled_id, human_rel_id = run_async(_setup())
+    cands = run_async(_svc().gc_candidates(max_mentions=1, limit=50))
+    ids = [c["entity_id"] for c in cands]
+    assert junk_id in ids
+    assert hot_id not in ids
+    assert labeled_id not in ids
+    assert human_rel_id not in ids
+    junk_row = next(c for c in cands if c["entity_id"] == junk_id)
+    assert {"entity_id", "name", "entity_type", "mention_count", "salience"} <= set(junk_row.keys())
