@@ -15,15 +15,11 @@ from app.models.chunk_extraction import ChunkExtraction
 from app.models.entity import Entity, EntityMention
 from app.models.source import Source
 from app.models.entity_relationship import EntityRelationship
+from app.prompts import PROF_MERGE_SYSTEM
 from app.services.entity_service import EntityService
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
-
-PROF_MERGE_SYSTEM = (
-    "Merge these entity descriptions into one concise summary (max 512 chars). "
-    "Preserve key facts from all sources."
-)
 
 
 class ResolutionService:

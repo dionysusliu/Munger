@@ -19,6 +19,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import async_session_maker
 from app.models.entity import Entity, EntityMention
 from app.models.entity_relationship import EntityRelationship
+from app.prompts import SAME_ENTITY_SYSTEM
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
@@ -242,10 +243,7 @@ class LinkingService:
         if not self.llm:
             return False
         messages = [
-            {
-                "role": "system",
-                "content": 'Same real-world entity? JSON only: {"same": true|false}',
-            },
+            {"role": "system", "content": SAME_ENTITY_SYSTEM},
             {
                 "role": "user",
                 "content": f"A: {a.name} ({a.entity_type})\nB: {b.name} ({b.entity_type})",
