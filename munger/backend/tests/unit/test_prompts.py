@@ -13,6 +13,11 @@ from app.prompts.extraction import (
     GLEAN_SYSTEM,
     GLEAN_YES_NO_SYSTEM,
 )
+from app.prompts.wiki import (
+    SUGGEST_LINKS_SYSTEM,
+    WIKI_TYPE_PROMPTS,
+    build_wiki_system,
+)
 
 
 class TestOntologyVocabulary:
@@ -87,3 +92,25 @@ class TestExtractionPrompts:
         assert '"missed_entities"' in GLEAN_SYSTEM
         assert '"missed_relationships"' in GLEAN_SYSTEM
         assert '"reasoning"' in GLEAN_SYSTEM
+
+
+class TestWikiPrompts:
+    def test_every_entity_type_has_a_page_prompt(self):
+        for name in ENTITY_TYPE_NAMES:
+            assert name in WIKI_TYPE_PROMPTS, name
+        assert "summary" in WIKI_TYPE_PROMPTS
+
+    def test_build_wiki_system_includes_title_and_quality_rules(self):
+        system = build_wiki_system("Consistent Hashing", "concept")
+        assert "Consistent Hashing" in system
+        assert "[[" in system  # wikilink syntax taught
+        assert "$" in system  # formula preservation rule present
+        assert "Do not invent" in system  # grounding rule present
+
+    def test_unknown_page_type_falls_back_gracefully(self):
+        system = build_wiki_system("X", "no_such_type")
+        assert "wiki page" in system
+
+    def test_suggest_links_keeps_json_contract(self):
+        assert "to_page_id" in SUGGEST_LINKS_SYSTEM
+        assert "link_type" in SUGGEST_LINKS_SYSTEM
