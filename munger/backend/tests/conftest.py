@@ -71,7 +71,26 @@ def _run_migrations_once():
     from app.db.migrate import run_migrations
 
     run_migrations()
+    # Kill DBOS zombies from a previous interrupted run: launch_dbos() RECOVERS any
+    # non-terminal workflow from the dbos schema (which per-test truncation never
+    # touches) and replays the ingest pipeline for sources that no longer exist —
+    # the replay then throws FK violations / "No content_text" inside whatever
+    # test happens to be running (observed as a cross-run flake since 2026-06-10).
+    run_async(_purge_dbos_zombies())
     yield
+
+
+async def _purge_dbos_zombies() -> None:
+    from sqlalchemy import text as _text
+
+    async with engine.begin() as conn:
+        present = await conn.execute(_text(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='dbos' AND table_name='workflow_status'"))
+        if present.first() is None:
+            return
+        await conn.execute(_text(
+            "DELETE FROM dbos.workflow_status WHERE status NOT IN ('SUCCESS', 'ERROR')"))
 
 
 @pytest.fixture(scope="session")

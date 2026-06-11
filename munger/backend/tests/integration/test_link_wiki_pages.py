@@ -41,6 +41,9 @@ def test_link_wiki_pages_creates_related_links(create_source):
         ingest_orchestrator="graph",
         ingest_map_mode="service",
         ingest_max_gleanings=0,
+        # Pin to 1 so both scripted entities (each with mention_count=1) get wiki pages;
+        # this test verifies link_wiki_pages creates cross-links, not the singleton gate.
+        ingest_wiki_min_mentions=1,
     )
     # script[0] is consumed by the contextual-prefix chat() call; script[1] is the
     # entity extraction dict (same ordering rationale as the E2E oracle).

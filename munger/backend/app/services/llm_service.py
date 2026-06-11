@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -551,6 +552,11 @@ class LLMService:
         self.settings = settings
         validate_provider_settings(settings)
         self.provider = self._create_provider(settings)
+        # Telemetry counters: incremented by chat(), _chat_structured_instructor(),
+        # embed_texts(), and chat_stream().  chat_structured fallback calls chat()
+        # so it is counted there; the instructor path is counted in
+        # _chat_structured_instructor() to avoid double-counting.
+        self.stats: dict[str, int] = {"calls": 0, "ms": 0}
         logger.info(
             "LLM service initialized: provider=%s chat_model=%s embedding_model=%s embedding_dims=%s",
             settings.default_llm_provider,
@@ -610,20 +616,41 @@ class LLMService:
 
     @trace_llm(name="llm_chat", run_type="llm")
     async def chat(self, messages: list[dict], **kwargs) -> str:
-        """Send a chat request to the configured provider."""
-        return await self.provider.chat(messages, **kwargs)
+        """Send a chat request to the configured provider.
+
+        Primary telemetry point for all non-instructor chat calls (including the
+        fallback path of chat_structured).  _chat_structured_instructor counts
+        separately so calls are never double-counted.
+        """
+        t0 = time.perf_counter()
+        result = await self.provider.chat(messages, **kwargs)
+        self.stats["calls"] += 1
+        self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
+        return result
 
     async def chat_stream(self, messages: list[dict], **kwargs):
-        """Stream chat increments from the configured provider."""
-        async for piece in self.provider.chat_stream(messages, **kwargs):
-            yield piece
+        """Stream chat increments from the configured provider.
+
+        Counts one call; ms measured to stream completion.
+        """
+        t0 = time.perf_counter()
+        try:
+            async for piece in self.provider.chat_stream(messages, **kwargs):
+                yield piece
+        finally:
+            self.stats["calls"] += 1
+            self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
 
     @trace_llm(name="llm_embed", run_type="embedding")
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts."""
         if not texts:
             return []
-        return await self.provider.embed(texts)
+        t0 = time.perf_counter()
+        result = await self.provider.embed(texts)
+        self.stats["calls"] += 1
+        self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
+        return result
 
     async def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
@@ -697,7 +724,9 @@ class LLMService:
         else:
             raise LLMError(f"Instructor unsupported for provider: {provider}")
 
-        return await client.chat.completions.create(
+        # Count here (instructor path bypasses self.chat(), so we track separately).
+        t0 = time.perf_counter()
+        result = await client.chat.completions.create(
             model=model,
             messages=messages,
             response_model=response_model,
@@ -705,6 +734,9 @@ class LLMService:
             temperature=kwargs.get("temperature", 0.2),
             max_tokens=kwargs.get("max_tokens", 4096),
         )
+        self.stats["calls"] += 1
+        self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
+        return result
 
     # ------------------------------------------------------------------
     # Munger-specific LLM operations

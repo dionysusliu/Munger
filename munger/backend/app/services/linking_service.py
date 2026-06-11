@@ -370,7 +370,11 @@ class LinkingService:
 
             result = await session.execute(
                 select(EntityMention.entity_id, EntityMention.chunk_id)
-                .where(EntityMention.source_id == source_id)
+                .where(
+                    EntityMention.source_id == source_id,
+                    EntityMention.mention_method == "extract",
+                    EntityMention.chunk_id.isnot(None),
+                )
             )
             rows = list(result.all())
 
@@ -387,10 +391,11 @@ class LinkingService:
                     for j in range(i + 1, len(lst)):
                         co_pairs.add((lst[i], lst[j]))
 
+            min_chunks = self.settings.ingest_comention_min_chunks
             links_created = 0
             for src_eid, tgt_eid in co_pairs:
                 shared = entity_chunks.get(src_eid, set()) & entity_chunks.get(tgt_eid, set())
-                if not shared:
+                if len(shared) < min_chunks:
                     continue
                 supporting_chunk = min(shared)
                 stmt = pg_insert(EntityRelationship).values(

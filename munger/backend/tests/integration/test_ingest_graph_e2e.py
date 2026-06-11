@@ -48,6 +48,9 @@ def _run_graph(source_id: int):
         ingest_orchestrator="graph",
         ingest_map_mode="service",
         ingest_max_gleanings=0,
+        # Pin to 1 so both scripted entities (each with mention_count=1) get wiki pages;
+        # this test verifies the wiki step generates pages, not the singleton gate.
+        ingest_wiki_min_mentions=1,
     )
     services = scripted_services(scripts, settings=settings)
     graph = build_ingest_graph(services, checkpointer=None)

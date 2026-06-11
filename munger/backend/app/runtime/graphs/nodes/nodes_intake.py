@@ -26,7 +26,7 @@ def make_intake_nodes(services: RuntimeServices) -> dict:
         source_id: int = state["source_id"]
         job_id: int | None = state.get("job_id")
 
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="register_source"):
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="register_source", llm=services.llm):
             async with async_session_maker() as session:
                 source = await session.get(Source, source_id)
                 if source is None:
@@ -44,7 +44,7 @@ def make_intake_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="parse_document"
+            source_id=source_id, job_id=job_id, step_key="parse_document", llm=services.llm
         ) as metrics:
             async with async_session_maker() as session:
                 source = await session.get(Source, source_id)
@@ -84,7 +84,7 @@ def make_intake_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="hash_dedup"
+            source_id=source_id, job_id=job_id, step_key="hash_dedup", llm=services.llm
         ) as metrics:
             async with async_session_maker() as session:
                 source = await session.get(Source, source_id)

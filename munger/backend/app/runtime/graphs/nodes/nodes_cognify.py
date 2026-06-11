@@ -51,7 +51,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="chunk_document"
+            source_id=source_id, job_id=job_id, step_key="chunk_document", llm=services.llm
         ) as metrics:
             await update_source_status(source_id, "chunking")
             if not services.chunk:
@@ -138,7 +138,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="map_chunks"
+            source_id=source_id, job_id=job_id, step_key="map_chunks", llm=services.llm
         ) as metrics:
             await update_source_status(source_id, "extracting_entities")
             if not services.map_chunks:
@@ -158,7 +158,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="reduce_entities"
+            source_id=source_id, job_id=job_id, step_key="reduce_entities", llm=services.llm
         ) as metrics:
             if not services.resolution:
                 raise ValueError("Resolution service unavailable")
@@ -177,7 +177,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="link_entities"
+            source_id=source_id, job_id=job_id, step_key="link_entities", llm=services.llm
         ) as metrics:
             if services.linking is None:
                 logger.info("LinkingService not available; skipping n_link for source %s", source_id)
@@ -197,7 +197,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="summarize_source"
+            source_id=source_id, job_id=job_id, step_key="summarize_source", llm=services.llm
         ) as metrics:
             await update_source_status(source_id, "summarizing")
             source = await get_source(source_id)
@@ -228,26 +228,44 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
 
         # --- generate_wiki_pages ---
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="generate_wiki_pages"
+            source_id=source_id, job_id=job_id, step_key="generate_wiki_pages", llm=services.llm
         ) as m:
             await update_source_status(source_id, "creating_pages")
             source = await get_source(source_id)
             created = 0
             updated = 0
+            skipped_low_mention = 0
             summary_page_id: int | None = None
 
             if source and services.wiki and services.llm:
                 text = source.content_text or ""
                 summary = source.content_summary or ""
+                threshold = services.settings.ingest_wiki_min_mentions
 
                 async with async_session_maker() as session:
+                    # Collect all unique entity ids for this source (to count skips)
+                    all_entity_ids = set(
+                        (
+                            await session.execute(
+                                select(Entity.id)
+                                .join(EntityMention, EntityMention.entity_id == Entity.id)
+                                .where(EntityMention.source_id == source_id)
+                                .distinct()
+                            )
+                        ).scalars().all()
+                    )
+                    # Gate: only entities meeting the mention threshold get wiki pages
                     rows = (
                         await session.execute(
                             select(EntityMention, Entity)
                             .join(Entity, Entity.id == EntityMention.entity_id)
                             .where(EntityMention.source_id == source_id)
+                            .where(Entity.mention_count >= threshold)
                         )
                     ).all()
+
+                passing_entity_ids = {entity.id for _, entity in rows}
+                skipped_low_mention = len(all_entity_ids - passing_entity_ids)
 
                 try:
                     page_content = summary or text[:5000]
@@ -308,11 +326,12 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
 
             m["pages_created"] = created
             m["pages_updated"] = updated
+            m["skipped_low_mention"] = skipped_low_mention
             wiki_metrics.update(m)
 
         # --- link_wiki_pages ---
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="link_wiki_pages"
+            source_id=source_id, job_id=job_id, step_key="link_wiki_pages", llm=services.llm
         ) as m:
             entities = await _entities_for_source(source_id)
             links = 0
@@ -350,7 +369,7 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         job_id: int | None = state.get("job_id")
 
         async with pipeline_step(
-            source_id=source_id, job_id=job_id, step_key="finalize_ingest"
+            source_id=source_id, job_id=job_id, step_key="finalize_ingest", llm=services.llm
         ) as metrics:
             entities = await _entities_for_source(source_id)
             async with async_session_maker() as session:

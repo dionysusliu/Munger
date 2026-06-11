@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **181 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **188 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 **Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
 ```
@@ -44,6 +44,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-11-extraction-windows.md` | ✅ DONE — extraction over K consecutive chunks/LLM call (INGEST_EXTRACTION_WINDOW_CHUNKS, default 1 = legacy; 2-3 recommended); demux to per-chunk rows preserves the reduce/mention/status contract; claimed-consecutive-run safety |
 | `2026-06-11-streaming-chat.md` | ✅ DONE — SSE streaming chat: provider chat_stream (base fallback + OpenRouter SSE), ChatService.ask_stream (meta→delta→done, persist-at-end), POST /api/chat/stream, frontend streaming bubble w/ abort-on-switch |
 | `2026-06-11-ingest-observability-ui.md` | ✅ DONE — React Flow pipeline DAG (server-driven `/api/pipeline/topology`) + stage drawer + Gantt + map donut + run history (`/api/sources/{id}/jobs`); replaces the text stepper |
+| `2026-06-11-linking-diet.md` | ✅ DONE — co-mention diet (extract-only mentions + min-shared≥2 → 21.5k edges to ~100s), wiki mention gate (≥2 default), per-step LLM call/time telemetry; + DBOS zombie-replay test flake root-caused & fixed |
 | SP3.3 ranked community search (no SP doc) | ✅ DONE — generated tsvector + GIN (mig 014); community_search ts_rank-ordered w/ ILIKE fallback |
 | multi-session chat (no SP doc) | ✅ DONE — backend list/delete sessions + auto-title from first message; frontend session rail (list/switch/new/delete, race-guarded) |
 | frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |
