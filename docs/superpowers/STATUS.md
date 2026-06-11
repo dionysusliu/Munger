@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **147 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **155 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 **Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
 ```
@@ -39,6 +39,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-10-sp3.2-retrieval-sharpening.md` | ✅ DONE — canonical-aware retrieval (COALESCE collapse) + vector seed-linking (existing entities HNSW, **no migration**) |
 | `2026-06-10-sp4.1-chat-over-retrieval.md` | ✅ DONE — `ChatService.ask` (read-only RAG: retrieve→bridge `shortest_path`→synthesize→persist), `chat_sessions`/`chat_messages` (mig 012), `GraphService.shortest_path`, `POST /api/chat` + session/messages |
 | `2026-06-10-sp4.2-feedback-writeback.md` | ✅ DONE — `FeedbackService` merge (labeled_pairs+resolve, reject also un-merges) / relate (`method='human'` relationship → edge rebuild) / rate (mig 013 `chat_messages.rating`); `POST /api/feedback/{merge,relate,rate}` |
+| `2026-06-11-sp2.4-graph-gc.md` | ✅ DONE — `GraphGCService`: auto-prune orphans (never human-labeled) + HITL low-value candidates + safe delete (canonical roots refused); `GET /api/gc/candidates`, `POST /api/gc/{prune-orphans,delete}` |
 | frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
@@ -60,6 +61,7 @@ Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy
 - Resolution (SP2.2): `app/services/entity_resolution_service.py` (block/score/resolve/unmerge/label + `_flatten_chains`), `app/models/labeled_pair.py` (mig 010), `app/api/resolution.py`, `RuntimeServices.entity_resolution`
 - Community reports (SP2.3b): `app/services/community_report_service.py` (generate_reports keywords+LLM summary, community_search), `app/api/communities.py`, `communities.title/summary/keywords` (mig 011), `RuntimeServices.community_report`
 - Chat (SP4.1): `app/services/chat_service.py` (read-only RAG ask: retrieve→bridge→synthesize→persist + history), `GraphService.shortest_path`, `app/models/chat_session.py`/`chat_message.py` (mig 012), `app/api/chat.py` (`POST /api/chat` + sessions/messages), `RuntimeServices.chat`
+- Graph GC (SP2.4): `app/services/graph_gc_service.py` (find_orphans/delete_entities/prune_orphans/gc_candidates; capture-then-NULL wiki order), `app/api/gc.py`, `RuntimeServices.gc`. Post-GC: re-run `/api/graph/recompute`
 - Graph backfill: `app/api/graph.py` — `POST /api/graph/recompute?rebuild_edges=true` (EdgeService.rebuild_all + GraphService.recompute; the backfill entry point for pre-existing data)
 - Feedback (SP4.2): `app/services/feedback_service.py` (merge: labeled_pairs+resolve, reject un-merges the pair; relate: human EntityRelationship→edge rebuild, service-level dedup; rate: ±1 on assistant turns, mig 013), `app/api/feedback.py`, `RuntimeServices.feedback`. Rating CONSUMER deferred (rerank boost later)
 

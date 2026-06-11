@@ -1,7 +1,7 @@
 """Main API router aggregator for Munger."""
 from fastapi import APIRouter
 
-from app.api import sources, wiki, entities, search, munger, config as config_api, retrieval, resolution, communities, chat, feedback, graph
+from app.api import sources, wiki, entities, search, munger, config as config_api, retrieval, resolution, communities, chat, feedback, graph, gc
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(sources.router, prefix="/sources", tags=["sources"])
@@ -16,3 +16,4 @@ api_router.include_router(communities.router, prefix="/communities", tags=["comm
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 api_router.include_router(graph.router, prefix="/graph", tags=["graph"])
+api_router.include_router(gc.router, prefix="/gc", tags=["gc"])

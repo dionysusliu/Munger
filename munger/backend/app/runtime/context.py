@@ -15,6 +15,7 @@ from app.services.chat_service import ChatService
 from app.services.community_report_service import CommunityReportService
 from app.services.entity_resolution_service import EntityResolutionService
 from app.services.feedback_service import FeedbackService
+from app.services.graph_gc_service import GraphGCService
 from app.services.resolution_service import ResolutionService
 from app.services.retrieval_service import RetrievalService
 from app.services.storage_service import StorageService
@@ -39,6 +40,7 @@ class RuntimeServices:
     community_report: Optional[CommunityReportService] = None
     chat: Optional[ChatService] = None
     feedback: Optional[FeedbackService] = None
+    gc: Optional[GraphGCService] = None
 
     @classmethod
     def from_settings(cls, settings: Settings, llm: Optional[LLMService] = None) -> "RuntimeServices":
@@ -58,6 +60,7 @@ class RuntimeServices:
         retrieval = RetrievalService(settings, llm_service=llm, edge_service=edges) if llm else None
         chat = ChatService(settings, llm_service=llm, retrieval=retrieval) if llm else None
         feedback = FeedbackService(settings)
+        gc = GraphGCService(settings)
         return cls(
             settings=settings,
             storage=storage,
@@ -75,4 +78,5 @@ class RuntimeServices:
             community_report=community_report,
             chat=chat,
             feedback=feedback,
+            gc=gc,
         )
