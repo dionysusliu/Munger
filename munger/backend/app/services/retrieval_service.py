@@ -93,10 +93,15 @@ class RetrievalService:
                 scores[eid] = scores.get(eid, 0.0) + 1.0 / (k + rank + 1)
         return scores
 
+    async def _embed_query(self, query: str) -> list[float] | None:
+        if self.llm is None:
+            return None
+        return await self.llm.embed_text(query)
+
     async def search(self, query: str, k: int = 20, salience_weight: float = 0.5) -> list[dict]:
         """Entity-centric retrieval: link -> recall(3) -> RRF -> salience rerank -> assemble top-k."""
         seeds = await self.link_seeds(query)
-        qvec = await self.llm.embed_text(query) if self.llm is not None else None
+        qvec = await self._embed_query(query)
 
         vector_ids = await self._vector_entities(qvec) if qvec is not None else []
         lexical_ids = await self._lexical_entities(query)
