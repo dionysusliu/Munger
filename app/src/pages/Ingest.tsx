@@ -390,13 +390,31 @@ export default function Ingest() {
     statusFilterRef.current = statusFilter;
   }, [statusFilter]);
 
-  // Fetch topology once per session (module-level cache survives re-renders)
+  // Fetch topology once per session (module-level cache survives re-renders).
+  // Retries with backoff so a transient backend hiccup doesn't silently kill the DAG.
   useEffect(() => {
     if (cachedTopology) return;
-    void pipelineTopology().then((t) => {
-      cachedTopology = t;
-      setTopology(t);
-    });
+    let cancelled = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = () => {
+      void pipelineTopology()
+        .then((t) => {
+          if (cancelled) return;
+          cachedTopology = t;
+          setTopology(t);
+        })
+        .catch(() => {
+          if (cancelled || attempt >= 3) return;
+          attempt += 1;
+          timer = setTimeout(load, 2000 * attempt);
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   const updateJob = useCallback((sourceId: number, updater: (job: IngestJob) => IngestJob) => {
