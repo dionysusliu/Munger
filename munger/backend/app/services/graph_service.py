@@ -69,6 +69,21 @@ class GraphService:
         weight = "weight" if g.number_of_edges() else None
         return nx.pagerank(g, weight=weight, personalization=personalization)
 
+    async def shortest_path(self, source: int, target: int) -> list[int]:
+        """Fewest-hop path of entity ids from source to target over entity_edges (the bridge).
+
+        Returns [] when either node is absent or the two are disconnected.
+        """
+        if source == target:
+            return [source]
+        g, _ = await self._build_graph()
+        if source not in g or target not in g:
+            return []
+        try:
+            return nx.shortest_path(g, source=source, target=target)
+        except nx.NetworkXNoPath:
+            return []
+
     async def recompute(self) -> dict:
         """Full recompute of entities.salience (PageRank) + entities.community_id (Louvain).
 

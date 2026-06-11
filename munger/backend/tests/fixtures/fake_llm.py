@@ -33,6 +33,9 @@ class ScriptedLLMService:
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [[0.1] * 768 for _ in texts]
 
+    async def embed_text(self, text: str) -> list[float]:
+        return (await self.embed_texts([text]))[0]
+
     async def summarize(self, text: str, max_length: int = 1000) -> str:
         return "Summary"
 
