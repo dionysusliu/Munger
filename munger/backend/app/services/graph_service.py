@@ -53,6 +53,22 @@ class GraphService:
             return []
         return nx.community.louvain_communities(g, weight="weight", seed=seed)
 
+    async def personalized_pagerank(self, seeds: dict[int, float]) -> dict[int, float]:
+        """Seed-biased PageRank over entity_edges. `seeds` maps entity_id -> weight.
+
+        Returns {} when there are no nodes or no seed mass lands on a graph node.
+        """
+        if not seeds:
+            return {}
+        g, _ = await self._build_graph()
+        if g.number_of_nodes() == 0:
+            return {}
+        personalization = {n: float(seeds.get(n, 0.0)) for n in g.nodes}
+        if sum(personalization.values()) == 0.0:
+            return {}
+        weight = "weight" if g.number_of_edges() else None
+        return nx.pagerank(g, weight=weight, personalization=personalization)
+
     async def recompute(self) -> dict:
         """Full recompute of entities.salience (PageRank) + entities.community_id (Louvain).
 
