@@ -13,7 +13,7 @@ EXTRACT_SYSTEM = f"""Extract entities and relationships from the chunk text.
 {NAMING_RULES}
 
 Return ONLY JSON matching:
-{{"entities":[{{"name":"Entity Name","type":"one allowed type","description":"brief description","char_start":0,"char_end":0}}],
+{{"entities":[{{"name":"Entity Name","type":"one allowed type","description":"brief description","char_start":0,"char_end":50}}],
  "relationships":[{{"source":"Entity A","target":"Entity B","type":"relates_to","description":"brief description"}}]}}
 Use document-global char offsets when possible. Include all salient entities."""
 

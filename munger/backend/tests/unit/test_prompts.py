@@ -78,3 +78,12 @@ class TestExtractionPrompts:
 
     def test_glean_yes_no_still_demands_yes_or_no(self):
         assert "YES or NO" in GLEAN_YES_NO_SYSTEM
+
+    def test_glean_system_contains_full_vocabulary(self):
+        for name in ENTITY_TYPE_NAMES:
+            assert name in GLEAN_SYSTEM
+
+    def test_glean_system_keeps_json_contract(self):
+        assert '"missed_entities"' in GLEAN_SYSTEM
+        assert '"missed_relationships"' in GLEAN_SYSTEM
+        assert '"reasoning"' in GLEAN_SYSTEM
