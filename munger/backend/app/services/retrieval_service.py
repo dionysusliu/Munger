@@ -147,18 +147,22 @@ class RetrievalService:
         return await self.llm.embed_text(query)
 
     async def _feedback_scores(self, ids: list[int]) -> dict[int, int]:
-        """Net 👍/👎 per entity, summed over rated assistant turns whose citations include it (SP4.3)."""
+        """Net 👍/👎 per CANONICAL entity, summed over rated assistant turns citing it (SP4.3).
+
+        Cited ids are resolved through COALESCE(canonical_entity_id, id) so ratings recorded
+        before a merge still reach the canonical that rerank actually scores."""
         if not ids:
             return {}
         async with async_session_maker() as s:
             rows = (await s.execute(
                 text("""
-                    SELECT (c.value ->> 'entity_id')::int AS eid, SUM(m.rating)::int AS net
+                    SELECT COALESCE(e.canonical_entity_id, e.id) AS eid, SUM(m.rating)::int AS net
                     FROM chat_messages m,
                          jsonb_array_elements((m.citations)::jsonb -> 'citations') AS c(value)
+                    JOIN entities e ON e.id = (c.value ->> 'entity_id')::int
                     WHERE m.rating IS NOT NULL AND m.citations IS NOT NULL
-                      AND (c.value ->> 'entity_id')::int = ANY(:ids)
-                    GROUP BY eid
+                      AND COALESCE(e.canonical_entity_id, e.id) = ANY(:ids)
+                    GROUP BY COALESCE(e.canonical_entity_id, e.id)
                 """),
                 {"ids": ids},
             )).all()

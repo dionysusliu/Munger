@@ -96,3 +96,21 @@ def test_thumbs_up_flips_close_ranking():
     boosted = run_async(svc.search("anything", k=5))
     new_ids = [r["entity_id"] for r in boosted]
     assert new_ids.index(a_id) < new_ids.index(b_id), "thumbs-up on A must flip the close ranking"
+
+
+def test_ratings_on_merged_member_reach_canonical():
+    """A rating that cited a pre-merge member id must boost the canonical after the merge."""
+    async def _inner():
+        async with async_session_maker() as s:
+            root = Entity(name="Root", entity_type="concept")
+            member = Entity(name="Member", entity_type="concept")
+            s.add_all([root, member]); await s.flush()
+            member.canonical_entity_id = root.id
+            await s.commit()
+            return root.id, member.id
+
+    root_id, member_id = run_async(_inner())
+    _rate_citing(member_id, 1)  # rated BEFORE/at merge time, citing the raw member id
+    svc = RetrievalService(get_settings())
+    net = run_async(svc._feedback_scores([root_id]))
+    assert net == {root_id: 1}, "member's rating must resolve to its canonical root"
