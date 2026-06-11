@@ -318,3 +318,38 @@ export async function chatListSessions(): Promise<{ sessions: ChatSessionSummary
 export async function chatDeleteSession(id: number): Promise<{ deleted: boolean }> {
   return apiFetch<{ deleted: boolean }>(`/api/chat/sessions/${id}`, { method: 'DELETE' });
 }
+
+export type ChatStreamEvent =
+  | { type: 'meta'; session_id: number; citations: ChatCitation[]; bridge: number[] }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; assistant_message_id: number; answer: string }
+  | { type: 'error'; detail: string };
+
+export async function chatSendStream(
+  message: string,
+  sessionId: number | undefined,
+  onEvent: (e: ChatStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, session_id: sessionId }),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`stream failed: ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 2);
+      if (frame.startsWith('data: ')) onEvent(JSON.parse(frame.slice(6)) as ChatStreamEvent);
+    }
+  }
+}
