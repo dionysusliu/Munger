@@ -85,3 +85,25 @@ def test_rate_message_assistant_only():
 
     rating, note = run_async(_row())
     assert rating == 1 and note == "good bridge"
+
+
+def test_merge_feedback_reject_after_merge_undoes_it():
+    """'Not the same' must also UNDO an existing soft-merge, not just flip the label."""
+    a_id, b_id = _two("Alpha Co", "Alpha Co.")
+    run_async(_svc().merge_feedback(a_id, b_id, same=True))
+    assert run_async(_canon(b_id)) == a_id
+    run_async(_svc().merge_feedback(a_id, b_id, same=False))
+    assert run_async(_canon(b_id)) is None, "reject feedback must clear the existing merge"
+    assert run_async(_canon(a_id)) is None
+    # and it must STAY apart on a further resolve
+    run_async(_svc().merge_feedback(a_id, b_id, same=False))
+    assert run_async(_canon(b_id)) is None
+
+
+def test_rate_message_rejects_invalid_rating():
+    import pytest
+
+    with pytest.raises(ValueError):
+        run_async(_svc().rate_message(1, 0))
+    with pytest.raises(ValueError):
+        run_async(_svc().rate_message(1, 5))

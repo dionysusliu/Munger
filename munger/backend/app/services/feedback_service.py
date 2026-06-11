@@ -22,9 +22,24 @@ class FeedbackService:
         self.edges = EdgeService(self.settings)
 
     async def merge_feedback(self, a_id: int, b_id: int, same: bool, note: str | None = None) -> dict:
-        """'These two are (not) the same entity' -> labeled_pairs + resolve + edge rebuild."""
+        """'These two are (not) the same entity' -> labeled_pairs + resolve + edge rebuild.
+
+        same=False also UNDOES an existing soft-merge between the pair (clears the
+        canonical pointer in either direction) — the label alone would only prevent
+        future merges. Note: resolve() is global, so a call may also merge OTHER
+        pending high-confidence near-duplicates (by design).
+        """
         label = "match" if same else "reject"
         await self.resolution.label_pair(a_id, b_id, label, note)
+        if not same:
+            async with async_session_maker() as s:
+                await s.execute(
+                    text("UPDATE entities SET canonical_entity_id = NULL "
+                         "WHERE (id = :a AND canonical_entity_id = :b) "
+                         "   OR (id = :b AND canonical_entity_id = :a)"),
+                    {"a": a_id, "b": b_id},
+                )
+                await s.commit()
         stats = await self.resolution.resolve()
         await self.edges.rebuild_all()
         return {"label": label, **stats}
@@ -66,6 +81,8 @@ class FeedbackService:
 
     async def rate_message(self, message_id: int, rating: int, note: str | None = None) -> int:
         """Rate an ASSISTANT turn +1/-1 (stored signal; rank consumption deferred). Returns rows updated."""
+        if rating not in (1, -1):
+            raise ValueError(f"rating must be 1 or -1, got {rating!r}")
         async with async_session_maker() as s:
             res = await s.execute(
                 text("UPDATE chat_messages SET rating = :r, feedback_note = :n "
