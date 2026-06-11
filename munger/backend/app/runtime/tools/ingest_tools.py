@@ -57,7 +57,7 @@ def _excerpt_from_mention(source_text: str, mention: EntityMention) -> str:
 
 def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> list[BaseTool]:
     async def parse_document(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="parse_document") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="parse_document", llm=services.llm) as metrics:
             await update_source_status(source_id, "extracting")
             async with async_session_maker() as session:
                 result = await session.execute(select(Source).where(Source.id == source_id))
@@ -88,7 +88,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
                 return f"Extracted {len(text)} characters"
 
     async def chunk_document(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="chunk_document") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="chunk_document", llm=services.llm) as metrics:
             await update_source_status(source_id, "chunking")
             if not services.chunk:
                 raise ValueError("Chunk service unavailable")
@@ -98,7 +98,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
             return f"Created {len(chunks)} chunks"
 
     async def map_chunks(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="map_chunks") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="map_chunks", llm=services.llm) as metrics:
             await update_source_status(source_id, "extracting_entities")
             if not services.map_chunks:
                 raise ValueError("Map chunk service unavailable")
@@ -111,7 +111,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
             )
 
     async def reduce_entities(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="reduce_entities") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="reduce_entities", llm=services.llm) as metrics:
             if not services.resolution:
                 raise ValueError("Resolution service unavailable")
             stats = await services.resolution.reduce_entities(source_id)
@@ -132,7 +132,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
         return await reduce_entities(source_id)
 
     async def summarize_source(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="summarize_source") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="summarize_source", llm=services.llm) as metrics:
             await update_source_status(source_id, "summarizing")
             source = await get_source(source_id)
             if not source or not source.content_text:
@@ -149,7 +149,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
             return f"Summary generated ({len(summary)} chars)"
 
     async def generate_wiki_pages(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="generate_wiki_pages") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="generate_wiki_pages", llm=services.llm) as metrics:
             await update_source_status(source_id, "creating_pages")
             source = await get_source(source_id)
             if not source or not services.wiki or not services.llm:
@@ -232,7 +232,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
             return f"Wiki pages: {created} created, {updated} updated"
 
     async def link_wiki_pages(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="link_wiki_pages") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="link_wiki_pages", llm=services.llm) as metrics:
             entities = await _entities_for_source(source_id)
             links = 0
             if services.wiki:
@@ -258,7 +258,7 @@ def build_ingest_tools(services: RuntimeServices, job_id: int | None = None) -> 
             return f"Created {links} wiki links"
 
     async def finalize_ingest(source_id: int) -> str:
-        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="finalize_ingest") as metrics:
+        async with pipeline_step(source_id=source_id, job_id=job_id, step_key="finalize_ingest", llm=services.llm) as metrics:
             entities = await _entities_for_source(source_id)
             async with async_session_maker() as session:
                 chunk_count = (

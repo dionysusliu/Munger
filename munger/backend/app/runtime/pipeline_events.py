@@ -164,13 +164,36 @@ async def pipeline_step(
     source_id: int,
     job_id: int | None,
     step_key: str,
+    llm=None,
 ):
+    """Async context manager that emits pipeline step start/complete/failed events.
+
+    Optional ``llm`` kwarg: any object with a ``stats`` dict (e.g. LLMService).
+    When provided, the manager snapshots stats before ``yield`` and injects the
+    delta into ``metrics`` as ``llm_calls`` / ``llm_ms`` after the step body.
+    Objects without ``.stats`` (e.g. ScriptedLLMService) are silently skipped.
+    """
     await emit_pipeline_step_start(source_id=source_id, job_id=job_id, step_key=step_key)
     start = time.perf_counter()
     metrics: dict[str, Any] = {}
+
+    # Snapshot LLM counters before entering the step body.
+    llm_stats = getattr(llm, "stats", None)
+    before_calls: int = llm_stats["calls"] if llm_stats is not None else 0
+    before_ms: int = llm_stats["ms"] if llm_stats is not None else 0
+
     try:
         yield metrics
         duration_ms = int((time.perf_counter() - start) * 1000)
+
+        # Inject LLM telemetry delta when at least one call occurred this step.
+        if llm_stats is not None:
+            delta_calls = llm_stats["calls"] - before_calls
+            delta_ms = llm_stats["ms"] - before_ms
+            if delta_calls > 0:
+                metrics.setdefault("llm_calls", delta_calls)
+                metrics.setdefault("llm_ms", delta_ms)
+
         await emit_pipeline_step_complete(
             source_id=source_id,
             job_id=job_id,
