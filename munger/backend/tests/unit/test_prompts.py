@@ -1,0 +1,53 @@
+"""Unit tests for the centralized prompt module (app/prompts/)."""
+
+from app.prompts.ontology import (
+    ALIAS_TYPE_MAPPING,
+    ENTITY_TYPE_NAMES,
+    ENTITY_TYPES,
+    LEGACY_TYPE_MAPPING,
+    NAMING_RULES,
+    ontology_block,
+)
+
+
+class TestOntologyVocabulary:
+    def test_exactly_seven_types(self):
+        assert set(ENTITY_TYPE_NAMES) == {
+            "person",
+            "organization",
+            "work",
+            "concept",
+            "mental_model",
+            "mechanism",
+            "event",
+        }
+
+    def test_every_type_has_definition_and_examples(self):
+        for name, info in ENTITY_TYPES.items():
+            assert info["definition"], name
+            assert info["example"], name
+            assert info["counter_example"], name
+
+    def test_legacy_mapping_covers_all_retired_types(self):
+        assert set(LEGACY_TYPE_MAPPING) == {
+            "book",
+            "paper",
+            "model",
+            "principle",
+            "incentive_structure",
+            "field",
+        }
+        assert set(LEGACY_TYPE_MAPPING.values()) <= set(ENTITY_TYPE_NAMES)
+
+    def test_alias_mapping_targets_valid_types(self):
+        assert set(ALIAS_TYPE_MAPPING.values()) <= set(ENTITY_TYPE_NAMES)
+
+    def test_ontology_block_lists_every_type_and_no_ellipsis(self):
+        block = ontology_block()
+        for name in ENTITY_TYPE_NAMES:
+            assert name in block
+        assert "..." not in block
+
+    def test_naming_rules_ban_document_local_labels(self):
+        for banned in ("Theorem N", "Figure N", "Table N", "Section N"):
+            assert banned in NAMING_RULES
