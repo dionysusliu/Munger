@@ -450,3 +450,52 @@ def test_offsetless_entities_fall_to_first_chunk():
         assert all(c.map_status == MAP_DONE for c in chunks)
 
     run_async(_run())
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — fanout grouping: fanout_chunks sends window-grouped chunk_ids
+# ---------------------------------------------------------------------------
+
+
+def test_send_fanout_groups_windows():
+    """_group_windows partitions IDs into windows of K; fanout_chunks uses chunk_ids payload key.
+
+    Verifies:
+    - _group_windows([10,20,30,40,50], 2) == [[10,20],[30,40],[50]]  (3 windows)
+    - _group_windows([10,20,30,40,50], 1) == 5 singletons
+    - fanout_chunks over 5 IDs with K=2 emits 3 Sends, each with "chunk_ids" key (not "chunk_id")
+    """
+    from unittest.mock import MagicMock
+
+    from app.runtime.graphs.nodes.nodes_cognify import _group_windows, make_cognify_nodes
+
+    ids = [10, 20, 30, 40, 50]
+
+    # --- _group_windows unit assertions ---
+    assert _group_windows(ids, 2) == [[10, 20], [30, 40], [50]], (
+        f"K=2 grouping wrong: {_group_windows(ids, 2)}"
+    )
+    assert _group_windows(ids, 1) == [[10], [20], [30], [40], [50]], (
+        f"K=1 must produce 5 singletons: {_group_windows(ids, 1)}"
+    )
+
+    # --- fanout_chunks payload shape ---
+    settings = MagicMock()
+    settings.ingest_extraction_window_chunks = 2
+    mock_services = MagicMock()
+    mock_services.settings = settings
+
+    nodes = make_cognify_nodes(mock_services)
+    fanout = nodes["fanout_chunks"]
+
+    state = {"chunk_ids": ids, "source_id": 99, "job_id": 1}
+    sends = fanout(state)
+
+    assert len(sends) == 3, f"Expected 3 Sends for K=2 over 5 ids, got {len(sends)}"
+    for send in sends:
+        assert "chunk_ids" in send.arg, f"Send payload must use 'chunk_ids' key: {send.arg}"
+        assert "chunk_id" not in send.arg, f"Send payload must NOT use old 'chunk_id' key: {send.arg}"
+
+    assert sends[0].arg["chunk_ids"] == [10, 20], f"Window 0 wrong: {sends[0].arg}"
+    assert sends[1].arg["chunk_ids"] == [30, 40], f"Window 1 wrong: {sends[1].arg}"
+    assert sends[2].arg["chunk_ids"] == [50], f"Window 2 (tail) wrong: {sends[2].arg}"

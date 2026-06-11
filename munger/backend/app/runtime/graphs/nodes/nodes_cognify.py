@@ -27,6 +27,17 @@ from app.schemas.wiki import WikiPageCreate
 logger = logging.getLogger(__name__)
 
 
+def _group_windows(ids: list, k: int) -> list[list]:
+    """Partition *ids* into consecutive windows of at most *k* items.
+
+    >>> _group_windows([1, 2, 3, 4, 5], 2)
+    [[1, 2], [3, 4], [5]]
+    """
+    if k <= 0:
+        k = 1
+    return [ids[i : i + k] for i in range(0, len(ids), k)]
+
+
 def make_cognify_nodes(services: RuntimeServices) -> dict:
     """Return a dict of async node functions keyed by node name."""
 
@@ -60,18 +71,19 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
     # ------------------------------------------------------------------
 
     def fanout_chunks(state: dict) -> list[Send] | str:
-        """Return one Send per chunk needing map work, or skip to map gate when none."""
+        """Return one Send per window of chunks needing map work, or skip to map gate when none."""
         chunk_ids = state.get("chunk_ids", [])
         if not chunk_ids:
             return "n_map_gate"
         source_id = state["source_id"]
         job_id = state.get("job_id")
+        k = services.settings.ingest_extraction_window_chunks
         return [
             Send(
                 "n_process_chunk",
-                {"source_id": source_id, "job_id": job_id, "chunk_id": cid},
+                {"source_id": source_id, "job_id": job_id, "chunk_ids": window},
             )
-            for cid in chunk_ids
+            for window in _group_windows(chunk_ids, k)
         ]
 
     # ------------------------------------------------------------------
@@ -100,12 +112,13 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
         if retry_target == "n_map":
             return "n_map"
 
+        k = services.settings.ingest_extraction_window_chunks
         return [
             Send(
                 "n_process_chunk",
-                {"source_id": source_id, "job_id": job_id, "chunk_id": cid},
+                {"source_id": source_id, "job_id": job_id, "chunk_ids": window},
             )
-            for cid in pending
+            for window in _group_windows(pending, k)
         ]
 
     async def route_after_map_gate(state: dict) -> list[Send] | str:

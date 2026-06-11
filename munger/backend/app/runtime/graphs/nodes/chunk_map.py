@@ -51,22 +51,31 @@ def make_process_chunk_node(services: RuntimeServices):
         raise ValueError("MapChunkService required for process_chunk node")
 
     async def process_chunk(state: dict) -> dict:
-        chunk_id: int = state["chunk_id"]
+        # Back-compat: new senders pass chunk_ids (list); legacy chunk_id (single int) also accepted.
+        ids: list[int] = state.get("chunk_ids") or [state["chunk_id"]]
         source_id: int = state["source_id"]
         job_id: int | None = state.get("job_id")
+        metrics_key = ",".join(map(str, ids))
 
         try:
-            result = await services.map_chunks.map_single_chunk(
-                chunk_id=chunk_id,
-                source_id=source_id,
-                job_id=job_id,
-            )
-            return {"map_metrics": {str(chunk_id): result}}
+            if len(ids) > 1:
+                result = await services.map_chunks.map_window(
+                    chunk_ids=ids,
+                    source_id=source_id,
+                    job_id=job_id,
+                )
+            else:
+                result = await services.map_chunks.map_single_chunk(
+                    chunk_id=ids[0],
+                    source_id=source_id,
+                    job_id=job_id,
+                )
+            return {"map_metrics": {metrics_key: result}}
         except Exception as exc:
-            logger.warning("process_chunk failed for chunk %s: %s", chunk_id, exc)
+            logger.warning("process_chunk failed for chunks %s: %s", ids, exc)
             return {
                 "map_metrics": {
-                    str(chunk_id): {"error": str(exc), "entities_raw": 0, "relationships_raw": 0}
+                    metrics_key: {"error": str(exc), "entities_raw": 0, "relationships_raw": 0}
                 }
             }
 
