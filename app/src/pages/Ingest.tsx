@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -9,25 +9,31 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  CheckCircle2,
-  XCircle,
   Clock,
   Loader2,
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import {
   deleteSource,
   getIngestStatus,
   listSources,
+  pipelineTopology,
   triggerIngest,
   uploadSource,
   type IngestLogEntry,
   type IngestStatusResponse,
   type IngestTimelineEvent,
+  type MapProgress,
+  type PipelineTopology,
   type SourceResponse,
 } from '@/lib/api';
+import PipelineDag from '@/components/ingest/PipelineDag';
+import StageDrawer from '@/components/ingest/StageDrawer';
+import { deriveStages, type StageView } from '@/components/ingest/stageState';
 
 type UiStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type StatusFilter = 'all' | 'pending' | 'processing' | 'completed' | 'failed';
@@ -48,6 +54,7 @@ interface IngestJob {
   updatedAt?: string;
   currentStep?: IngestStatusResponse['current_step'];
   stepMetrics?: IngestStatusResponse['step_metrics'];
+  mapProgress?: MapProgress | null;
 }
 
 interface QueueQuery {
@@ -77,20 +84,6 @@ const IN_FLIGHT_STATUSES = new Set([
   'creating_pages',
   'analyzing',
 ]);
-
-const PIPELINE_STEPS = [
-  { key: 'register_source', label: 'Registering source' },
-  { key: 'parse_document', label: 'Reading document' },
-  { key: 'hash_dedup', label: 'Checking for duplicates' },
-  { key: 'chunk_document', label: 'Splitting into sections' },
-  { key: 'map_chunks', label: 'Mapping chunks' },
-  { key: 'reduce_entities', label: 'Merging entities' },
-  { key: 'link_entities', label: 'Linking entities' },
-  { key: 'summarize_source', label: 'Writing summary' },
-  { key: 'generate_wiki_pages', label: 'Creating wiki pages' },
-  { key: 'link_wiki_pages', label: 'Linking pages' },
-  { key: 'finalize_ingest', label: 'Finishing up' },
-] as const;
 
 const NARROWING_FILTERS = new Set<StatusFilter>(['pending', 'completed', 'failed']);
 
@@ -189,101 +182,42 @@ function applyStatusUpdate(job: IngestJob, payload: IngestStatusResponse): Inges
     updatedAt: payload.updated_at,
     currentStep: payload.current_step ?? job.currentStep,
     stepMetrics: payload.step_metrics ?? job.stepMetrics,
+    mapProgress: payload.map_progress ?? job.mapProgress,
   };
-}
-
-function completedStepKeys(events: IngestTimelineEvent[]): Set<string> {
-  const done = new Set<string>();
-  for (const event of events) {
-    if (event.event_type !== 'pipeline_step_complete') continue;
-    const key = String(event.payload?.step_key || '');
-    if (key) done.add(key);
-  }
-  return done;
-}
-
-function failedStep(events: IngestTimelineEvent[]): { key: string; message: string } | null {
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const event = events[i];
-    if (event.event_type !== 'pipeline_step_failed') continue;
-    return {
-      key: String(event.payload?.step_key || ''),
-      message: String(event.payload?.message || 'Step failed'),
-    };
-  }
-  return null;
-}
-
-function PipelineProgress({ job }: { job: IngestJob }) {
-  const done = completedStepKeys(job.events);
-  const failure = failedStep(job.events);
-  const activeIndex = job.currentStep?.index ?? (done.size + 1);
-  const total = job.currentStep?.total ?? PIPELINE_STEPS.length;
-  const metrics = job.stepMetrics ?? {};
-
-  return (
-    <div className="mb-3 space-y-2">
-      <div className="flex items-center justify-between text-mono-sm text-text-muted">
-        <span>Pipeline progress</span>
-        <span>
-          {Math.min(activeIndex, total)}/{total}
-        </span>
-      </div>
-      <div className="space-y-1.5">
-        {PIPELINE_STEPS.map((step, idx) => {
-          const stepNum = idx + 1;
-          const isDone = done.has(step.key);
-          const isActive = !isDone && stepNum === activeIndex && job.status === 'processing';
-          const isFailed = failure?.key === step.key;
-          let statusClass = 'border-amber-800/15 bg-bg-hover text-text-muted';
-          if (isDone) statusClass = 'border-success/25 bg-success/10 text-success';
-          if (isActive) statusClass = 'border-warning/30 bg-warning/10 text-warning';
-          if (isFailed) statusClass = 'border-error/30 bg-error/10 text-error';
-
-          return (
-            <div key={step.key} className={`rounded-md border px-3 py-2 text-body-sm ${statusClass}`}>
-              <div className="flex items-center justify-between gap-2">
-                <span>{step.label}</span>
-                {isDone && <CheckCircle2 className="h-4 w-4 shrink-0" />}
-                {isActive && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />}
-                {isFailed && <XCircle className="h-4 w-4 shrink-0" />}
-              </div>
-              {isFailed && failure && (
-                <p className="mt-1 text-mono-sm text-error">{failure.message}</p>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {Object.keys(metrics).length > 0 && (
-        <div className="rounded-md border border-amber-800/15 bg-bg-hover px-3 py-2 text-mono-sm text-text-secondary">
-          {Object.entries(metrics).map(([key, value]) => (
-            <span key={key} className="mr-3">
-              {key.replace(/_/g, ' ')}: {String(value)}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function JobRow({
   job,
+  topology,
   onReingest,
   onRemove,
 }: {
   job: IngestJob;
+  topology: PipelineTopology | null;
   onReingest: (sourceId: number) => void;
   onRemove: (sourceId: number, filename: string) => void;
 }) {
   const navigate = useNavigate();
   const isActive = job.status === 'processing' || job.status === 'pending';
   const [expanded, setExpanded] = useState(isActive);
+  const [selectedStage, setSelectedStage] = useState<StageView | null>(null);
 
   useEffect(() => {
     if (isActive) setExpanded(true);
   }, [isActive]);
+
+  // Derive per-stage state from events — memoized on events + status change (2s poll)
+  const derivedStages = useMemo(
+    () =>
+      topology ? deriveStages(topology.stages, job.events, job.backendStatus) : [],
+    [topology, job.events, job.backendStatus],
+  );
+
+  const handleStageClick = useCallback((stage: StageView) => {
+    setSelectedStage(stage);
+  }, []);
+
+  const hasProgress = job.events.length > 0 || !!job.currentStep;
 
   return (
     <motion.div layout className="overflow-hidden rounded-lg border border-amber-800/10 bg-bg-elevated">
@@ -326,14 +260,20 @@ function JobRow({
               </div>
             )}
 
-            {(isActive || job.events.length > 0 || job.currentStep) && (
-              <div className="mb-3 max-h-80 overflow-y-auto pr-1">
+            {/* Pipeline DAG — replaces old PipelineProgress stepper */}
+            {(isActive || hasProgress) && topology && (
+              <div className="mb-3">
                 {job.status === 'pending' && job.events.length === 0 ? (
                   <div className="rounded-md border border-amber-800/20 bg-bg-hover px-3 py-2 text-body-sm text-text-muted">
                     Waiting for worker to pick up this job…
                   </div>
                 ) : (
-                  <PipelineProgress job={job} />
+                  <PipelineDag
+                    topology={topology}
+                    stages={derivedStages}
+                    mapProgress={job.mapProgress}
+                    onStageClick={handleStageClick}
+                  />
                 )}
               </div>
             )}
@@ -386,9 +326,20 @@ function JobRow({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Stage detail drawer — rendered per-row so each row manages its own selection */}
+      <StageDrawer
+        stage={selectedStage}
+        allEvents={job.events}
+        open={selectedStage !== null}
+        onClose={() => setSelectedStage(null)}
+      />
     </motion.div>
   );
 }
+
+// Module-level topology cache: fetched once, survives filter/page changes within the session.
+let cachedTopology: PipelineTopology | null = null;
 
 export default function Ingest() {
   const [jobs, setJobs] = useState<IngestJob[]>([]);
@@ -401,6 +352,7 @@ export default function Ingest() {
   const [listError, setListError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [topology, setTopology] = useState<PipelineTopology | null>(cachedTopology);
 
   const pollTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const lastEventIdRef = useRef<Map<number, number>>(new Map());
@@ -413,6 +365,15 @@ export default function Ingest() {
   useEffect(() => {
     statusFilterRef.current = statusFilter;
   }, [statusFilter]);
+
+  // Fetch topology once per session (module-level cache survives re-renders)
+  useEffect(() => {
+    if (cachedTopology) return;
+    void pipelineTopology().then((t) => {
+      cachedTopology = t;
+      setTopology(t);
+    });
+  }, []);
 
   const updateJob = useCallback((sourceId: number, updater: (job: IngestJob) => IngestJob) => {
     setJobs((prev) => prev.map((job) => (job.sourceId === sourceId ? updater(job) : job)));
@@ -770,6 +731,7 @@ export default function Ingest() {
               <JobRow
                 key={job.sourceId}
                 job={job}
+                topology={topology}
                 onReingest={(sourceId) => void startIngest(sourceId)}
                 onRemove={(sourceId, filename) => void handleRemove(sourceId, filename)}
               />

@@ -52,6 +52,14 @@ export interface PipelineStepInfo {
   total: number;
 }
 
+export interface MapProgress {
+  pending: number;
+  running: number;
+  done: number;
+  failed: number;
+  total: number;
+}
+
 export interface IngestStatusResponse {
   source_id: number;
   status: string;
@@ -63,6 +71,31 @@ export interface IngestStatusResponse {
   events_has_more: boolean;
   current_step?: PipelineStepInfo | null;
   step_metrics?: Record<string, number | string>;
+  map_progress?: MapProgress | null;
+}
+
+// ── Pipeline topology ──────────────────────────────────────────────────────────
+
+export interface PipelineStage {
+  key: string;
+  label: string;
+  index: number;
+  group: 'intake' | 'cognify';
+  fan_out: boolean;
+}
+
+export interface PipelineTopology {
+  stages: PipelineStage[];
+  total: number;
+}
+
+export interface SourceJob {
+  id: number;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  error_message: string | null;
+  duration_ms: number | null;
 }
 
 export interface WikiPageResponse {
@@ -324,6 +357,16 @@ export type ChatStreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'done'; assistant_message_id: number; answer: string }
   | { type: 'error'; detail: string };
+
+export async function pipelineTopology(): Promise<PipelineTopology> {
+  return apiFetch<PipelineTopology>('/api/pipeline/topology');
+}
+
+export async function sourceJobs(
+  sourceId: number,
+): Promise<{ source_id: number; jobs: SourceJob[] }> {
+  return apiFetch<{ source_id: number; jobs: SourceJob[] }>(`/api/sources/${sourceId}/jobs`);
+}
 
 export async function chatSendStream(
   message: string,
