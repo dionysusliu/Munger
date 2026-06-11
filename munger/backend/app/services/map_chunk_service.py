@@ -19,6 +19,7 @@ from app.core.database import async_session_maker
 from app.models.chunk import Chunk
 from app.models.chunk_extraction import ChunkExtraction
 from app.models.source import Source
+from app.prompts import EXTRACT_SYSTEM, GLEAN_SYSTEM, GLEAN_YES_NO_SYSTEM
 from app.schemas.extraction import ExtractionResult, GleanResult
 from app.services.chunk_map_status import (
     MAP_DONE,
@@ -30,20 +31,6 @@ from app.services.ingest_job_service import touch_job_heartbeat
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
-
-EXTRACT_SYSTEM = """Extract entities and relationships from the chunk text.
-Return ONLY JSON matching:
-{"entities":[{"name":"...","type":"person|concept|model|...","description":"...","char_start":0,"char_end":0}],
- "relationships":[{"source":"...","target":"...","type":"relates_to","description":"..."}]}
-Use document-global char offsets when possible. Include all salient entities."""
-
-GLEAN_YES_NO_SYSTEM = (
-    "Were important entities missed in the prior extraction for this chunk? "
-    "Answer with exactly YES or NO."
-)
-
-GLEAN_CONTINUE_SYSTEM = """Many entities were missed in the first pass. Return ONLY JSON:
-{"missed_entities":[...],"missed_relationships":[...],"reasoning":"..."}"""
 
 
 @dataclass
@@ -158,7 +145,7 @@ class MapChunkService:
             return []
 
         continue_messages = [
-            {"role": "system", "content": GLEAN_CONTINUE_SYSTEM},
+            {"role": "system", "content": GLEAN_SYSTEM},
             {
                 "role": "user",
                 "content": f"Already extracted: {known}\n\nChunk:\n{chunk.content}",
