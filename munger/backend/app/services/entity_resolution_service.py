@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from rapidfuzz import fuzz
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.core.config import Settings, get_settings
 from app.core.database import async_session_maker
@@ -77,3 +77,91 @@ class EntityResolutionService:
             a = await s.get(Entity, a_id)
             b = await s.get(Entity, b_id)
         return self._score_pair(a, b, adj)
+
+    async def label_pair(self, a_id: int, b_id: int, label: str, note: str | None = None) -> None:
+        """Record a HITL match/reject decision (ordered a<b, upsert)."""
+        lo, hi = (a_id, b_id) if a_id < b_id else (b_id, a_id)
+        async with async_session_maker() as s:
+            await s.execute(
+                text("""
+                    INSERT INTO labeled_pairs (entity_a_id, entity_b_id, label, note)
+                    VALUES (:a, :b, :label, :note)
+                    ON CONFLICT (entity_a_id, entity_b_id)
+                    DO UPDATE SET label = EXCLUDED.label, note = EXCLUDED.note
+                """),
+                {"a": lo, "b": hi, "label": label, "note": note},
+            )
+            await s.commit()
+
+    async def _labels(self) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+        async with async_session_maker() as s:
+            rows = (await s.execute(text(
+                "SELECT entity_a_id, entity_b_id, label FROM labeled_pairs"))).all()
+        match = {(r[0], r[1]) for r in rows if r[2] == "match"}
+        reject = {(r[0], r[1]) for r in rows if r[2] == "reject"}
+        return match, reject
+
+    async def resolve(self, tau_block: float = 0.4, tau_auto: float = 0.85) -> dict:
+        """Block -> score -> apply labels -> cluster -> assign canonical_entity_id. Idempotent."""
+        import networkx as nx
+
+        candidates = await self._block_candidates(tau_block)
+        match, reject = await self._labels()
+        adj = await self._load_adjacency()
+
+        def _ordered(p, q):
+            return (p, q) if p < q else (q, p)
+
+        ids = {e for pair in candidates for e in pair} | {e for pair in match for e in pair}
+        ents: dict[int, Entity] = {}
+        if ids:
+            async with async_session_maker() as s:
+                ents = {
+                    e.id: e
+                    for e in (await s.execute(select(Entity).where(Entity.id.in_(list(ids))))).scalars().all()
+                }
+
+        merge_edges: set[tuple[int, int]] = set()
+        for a_id, b_id in candidates:
+            key = _ordered(a_id, b_id)
+            if key in reject:
+                continue
+            if a_id in ents and b_id in ents and self._score_pair(ents[a_id], ents[b_id], adj) >= tau_auto:
+                merge_edges.add(key)
+        for key in match:
+            if key not in reject:
+                merge_edges.add(key)
+
+        g = nx.Graph()
+        g.add_edges_from(merge_edges)
+        merged = 0
+        async with async_session_maker() as s:
+            for comp in nx.connected_components(g):
+                members = list(comp)
+                meta = {
+                    r[0]: (r[1] or 0, float(r[2] or 0.0))
+                    for r in (await s.execute(text(
+                        "SELECT id, mention_count, salience FROM entities WHERE id = ANY(:ids)"),
+                        {"ids": members})).all()
+                }
+                canonical = max(members, key=lambda e: (meta[e][0], meta[e][1], -e))
+                for m in members:
+                    if m != canonical:
+                        await s.execute(text(
+                            "UPDATE entities SET canonical_entity_id = :c WHERE id = :m"),
+                            {"c": canonical, "m": m})
+                        merged += 1
+            await s.commit()
+
+        clusters = nx.number_connected_components(g) if g.number_of_nodes() else 0
+        return {"candidates": len(candidates), "merged": merged, "clusters": clusters}
+
+    async def unmerge(self, entity_id: int) -> int:
+        """Reverse a soft-merge: clear this entity's pointer AND release any members pointing to it."""
+        async with async_session_maker() as s:
+            res = await s.execute(text(
+                "UPDATE entities SET canonical_entity_id = NULL "
+                "WHERE id = :e OR canonical_entity_id = :e"),
+                {"e": entity_id})
+            await s.commit()
+            return res.rowcount or 0
