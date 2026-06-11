@@ -103,7 +103,12 @@ class RetrievalService:
         return [eid for eid, _ in ranked[:limit]]
 
     async def _canonical_map(self, ids: list[int]) -> dict[int, int]:
-        """id -> COALESCE(canonical_entity_id, id) for the given ids."""
+        """id -> COALESCE(canonical_entity_id, id) for the given ids.
+
+        Single COALESCE hop is correct because EntityResolutionService.resolve() runs
+        _flatten_chains() — canonical_entity_id always points DIRECTLY to the root (no
+        chains). Same invariant EdgeService._AGG_SELECT relies on.
+        """
         uniq = list({i for i in ids})
         if not uniq:
             return {}
