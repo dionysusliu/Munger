@@ -33,6 +33,9 @@ import {
 } from '@/lib/api';
 import PipelineDag from '@/components/ingest/PipelineDag';
 import StageDrawer from '@/components/ingest/StageDrawer';
+import GanttTimeline from '@/components/ingest/GanttTimeline';
+import MapProgressDonut from '@/components/ingest/MapProgressDonut';
+import RunHistory from '@/components/ingest/RunHistory';
 import { deriveStages, type StageView } from '@/components/ingest/stageState';
 
 type UiStatus = 'pending' | 'processing' | 'completed' | 'failed';
@@ -275,6 +278,27 @@ function JobRow({
                     onStageClick={handleStageClick}
                   />
                 )}
+              </div>
+            )}
+
+            {/* Row 2: Gantt timeline + side panel (map donut + run history) */}
+            {hasProgress && topology && job.events.length > 0 && (
+              <div className="mb-3 grid grid-cols-3 gap-4">
+                {/* Gantt — 2/3 width */}
+                <div className="col-span-2 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                  <GanttTimeline stages={derivedStages} events={job.events} />
+                </div>
+                {/* Right column — map donut (if available) + run history */}
+                <div className="col-span-1 flex flex-col gap-3">
+                  {job.mapProgress && job.mapProgress.total > 0 && (
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                      <MapProgressDonut progress={job.mapProgress} />
+                    </div>
+                  )}
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <RunHistory sourceId={job.sourceId} />
+                  </div>
+                </div>
               </div>
             )}
 
