@@ -29,20 +29,37 @@ class RetrievalService:
         self.edges = edge_service or EdgeService(self.settings)
         self.graph = graph_service or GraphService(self.settings)
 
-    async def link_seeds(self, query: str, limit: int = 5) -> list[int]:
-        """Seed entities for the graph channel: exact lower(name) tokens OR ILIKE on the query."""
+    async def link_seeds(self, query: str, limit: int = 5, query_vec: list[float] | None = None) -> list[int]:
+        """Seed entities (canonical) for the graph channel: name match + optional vector ANN (entities HNSW)."""
         tokens = [t for t in query.lower().split() if t]
         async with async_session_maker() as s:
             rows = (await s.execute(
                 text("""
-                    SELECT id FROM entities
+                    SELECT COALESCE(canonical_entity_id, id) AS cid, MAX(salience) AS sal
+                    FROM entities
                     WHERE lower(name) = ANY(:tokens) OR name ILIKE :pat
-                    ORDER BY salience DESC NULLS LAST
+                    GROUP BY COALESCE(canonical_entity_id, id)
+                    ORDER BY sal DESC NULLS LAST
                     LIMIT :lim
                 """),
                 {"tokens": tokens or [""], "pat": f"%{query}%", "lim": limit},
             )).all()
-        return [r[0] for r in rows]
+            seeds: list[int] = [r[0] for r in rows]
+            if query_vec is not None:
+                vec_rows = (await s.execute(
+                    text("""
+                        SELECT COALESCE(canonical_entity_id, id) AS cid
+                        FROM entities
+                        WHERE embedding IS NOT NULL
+                        ORDER BY embedding <=> CAST(:vec AS vector)
+                        LIMIT :lim
+                    """),
+                    {"vec": _vec_literal(query_vec), "lim": limit},
+                )).all()
+                for (cid,) in vec_rows:
+                    if cid not in seeds:
+                        seeds.append(cid)
+        return seeds
 
     async def _vector_entities(self, query_vec: list[float], limit: int = 20) -> list[int]:
         """Chunk ANN -> entity_mentions -> entity_ids, ranked by best (min) cosine distance."""
@@ -85,6 +102,35 @@ class RetrievalService:
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
         return [eid for eid, _ in ranked[:limit]]
 
+    async def _canonical_map(self, ids: list[int]) -> dict[int, int]:
+        """id -> COALESCE(canonical_entity_id, id) for the given ids.
+
+        Single COALESCE hop is correct because EntityResolutionService.resolve() runs
+        _flatten_chains() — canonical_entity_id always points DIRECTLY to the root (no
+        chains). Same invariant EdgeService._AGG_SELECT relies on.
+        """
+        uniq = list({i for i in ids})
+        if not uniq:
+            return {}
+        async with async_session_maker() as s:
+            rows = (await s.execute(
+                text("SELECT id, COALESCE(canonical_entity_id, id) FROM entities WHERE id = ANY(:ids)"),
+                {"ids": uniq},
+            )).all()
+        return {r[0]: r[1] for r in rows}
+
+    @staticmethod
+    def _collapse(ids: list[int], canon: dict[int, int]) -> list[int]:
+        """Map each id to its canonical, dedup preserving first (best-rank) occurrence."""
+        out: list[int] = []
+        seen: set[int] = set()
+        for i in ids:
+            c = canon.get(i, i)
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+        return out
+
     @staticmethod
     def _rrf(ranked_lists: list[list[int]], k: int = RRF_K) -> dict[int, float]:
         scores: dict[int, float] = {}
@@ -100,12 +146,17 @@ class RetrievalService:
 
     async def search(self, query: str, k: int = 20, salience_weight: float = 0.5) -> list[dict]:
         """Entity-centric retrieval: link -> recall(3) -> RRF -> salience rerank -> assemble top-k."""
-        seeds = await self.link_seeds(query)
         qvec = await self._embed_query(query)
+        seeds = await self.link_seeds(query, query_vec=qvec)
 
         vector_ids = await self._vector_entities(qvec) if qvec is not None else []
         lexical_ids = await self._lexical_entities(query)
         graph_ids = await self._graph_entities(seeds)
+
+        canon = await self._canonical_map(vector_ids + lexical_ids + graph_ids)
+        vector_ids = self._collapse(vector_ids, canon)
+        lexical_ids = self._collapse(lexical_ids, canon)
+        graph_ids = self._collapse(graph_ids, canon)
 
         fused = self._rrf([vector_ids, lexical_ids, graph_ids])
         if not fused:
