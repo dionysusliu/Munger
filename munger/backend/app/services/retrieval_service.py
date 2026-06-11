@@ -14,6 +14,8 @@ from app.services.edge_service import EdgeService
 from app.services.graph_service import GraphService
 
 RRF_K = 60
+FEEDBACK_WEIGHT = 0.1  # per net-rating point (SP4.3 rating consumer)
+FEEDBACK_CLAMP = 3     # net rating saturates at ±3 -> factor ∈ [0.7, 1.3]
 
 
 def _vec_literal(vec: list[float]) -> str:
@@ -144,6 +146,32 @@ class RetrievalService:
             return None
         return await self.llm.embed_text(query)
 
+    async def _feedback_scores(self, ids: list[int]) -> dict[int, int]:
+        """Net 👍/👎 per entity, summed over rated assistant turns whose citations include it (SP4.3)."""
+        if not ids:
+            return {}
+        async with async_session_maker() as s:
+            rows = (await s.execute(
+                text("""
+                    SELECT (c.value ->> 'entity_id')::int AS eid, SUM(m.rating)::int AS net
+                    FROM chat_messages m,
+                         jsonb_array_elements((m.citations)::jsonb -> 'citations') AS c(value)
+                    WHERE m.rating IS NOT NULL AND m.citations IS NOT NULL
+                      AND (c.value ->> 'entity_id')::int = ANY(:ids)
+                    GROUP BY eid
+                """),
+                {"ids": ids},
+            )).all()
+        return {r[0]: int(r[1]) for r in rows}
+
+    @staticmethod
+    def _feedback_factor(net: int) -> float:
+        """Bounded rerank multiplier from net rating: 1 + 0.1*clamp(net, ±3) ∈ [0.7, 1.3].
+
+        Conservative: feedback nudges close calls, never zeroes or dominates."""
+        clamped = max(-FEEDBACK_CLAMP, min(FEEDBACK_CLAMP, net))
+        return 1.0 + FEEDBACK_WEIGHT * clamped
+
     async def search(self, query: str, k: int = 20, salience_weight: float = 0.5) -> list[dict]:
         """Entity-centric retrieval: link -> recall(3) -> RRF -> salience rerank -> assemble top-k."""
         qvec = await self._embed_query(query)
@@ -169,8 +197,13 @@ class RetrievalService:
                 {"ids": ids},
             )).all()
         salience = {r[0]: float(r[1]) for r in sal_rows}
+        feedback = await self._feedback_scores(ids)
         reranked = sorted(
-            ids, key=lambda e: fused[e] * (1.0 + salience_weight * salience.get(e, 0.0)), reverse=True
+            ids,
+            key=lambda e: fused[e]
+            * (1.0 + salience_weight * salience.get(e, 0.0))
+            * self._feedback_factor(feedback.get(e, 0)),
+            reverse=True,
         )[:k]
 
         return [await self._assemble(e, fused[e], salience.get(e, 0.0)) for e in reranked]
