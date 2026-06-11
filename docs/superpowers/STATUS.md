@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **159 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **163 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 **Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
 ```
@@ -41,6 +41,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-10-sp4.2-feedback-writeback.md` | ✅ DONE — `FeedbackService` merge (labeled_pairs+resolve, reject also un-merges) / relate (`method='human'` relationship → edge rebuild) / rate (mig 013 `chat_messages.rating`); `POST /api/feedback/{merge,relate,rate}` |
 | `2026-06-11-sp2.4-graph-gc.md` | ✅ DONE — `GraphGCService`: auto-prune orphans (never human-labeled) + HITL low-value candidates + safe delete (canonical roots refused); `GET /api/gc/candidates`, `POST /api/gc/{prune-orphans,delete}` |
 | SP4.3 rating consumer (no SP doc) | ✅ DONE — chat 👍/👎 nudges retrieval rerank: bounded factor 1+0.1*clamp(net,±3), canonical-aware citation resolution; + worker phantom-healthcheck disable |
+| multi-session chat (no SP doc) | ✅ DONE — backend list/delete sessions + auto-title from first message; frontend session rail (list/switch/new/delete, race-guarded) |
 | frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
