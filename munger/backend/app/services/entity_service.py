@@ -11,6 +11,7 @@ from app.core.database import async_session_maker
 from app.core.config import get_settings
 from app.models.entity import Entity, EntityMention
 from app.models.wiki import WikiPage
+from app.prompts import ALIAS_TYPE_MAPPING, ENTITY_TYPES, LEGACY_TYPE_MAPPING
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
@@ -308,37 +309,10 @@ class EntityService:
     # ------------------------------------------------------------------
 
     def _normalize_entity_type(self, entity_type: str) -> str:
-        """Normalize entity type to one of the supported types."""
-        type_mapping = {
-            "person": "person",
-            "people": "person",
-            "individual": "person",
-            "author": "person",
-            "concept": "concept",
-            "idea": "concept",
-            "notion": "concept",
-            "model": "model",
-            "mental model": "model",
-            "framework": "model",
-            "mechanism": "mechanism",
-            "process": "mechanism",
-            "system": "mechanism",
-            "incentive": "incentive_structure",
-            "incentive_structure": "incentive_structure",
-            "incentives": "incentive_structure",
-            "book": "book",
-            "paper": "paper",
-            "article": "paper",
-            "publication": "paper",
-            "organization": "organization",
-            "company": "organization",
-            "institution": "organization",
-            "field": "field",
-            "discipline": "field",
-            "domain": "field",
-            "event": "event",
-            "principle": "principle",
-            "law": "principle",
-            "rule": "principle",
-        }
-        return type_mapping.get(entity_type.lower(), "concept")
+        """Normalize a raw LLM type label to the 7-type ontology vocabulary."""
+        key = entity_type.lower().strip().replace(" ", "_")
+        if key in ENTITY_TYPES:
+            return key
+        if key in LEGACY_TYPE_MAPPING:
+            return LEGACY_TYPE_MAPPING[key]
+        return ALIAS_TYPE_MAPPING.get(key, "concept")
