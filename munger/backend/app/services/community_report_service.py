@@ -6,6 +6,7 @@ regenerated after each recompute (recompute hard-deletes communities)."""
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 
 from pydantic import BaseModel
@@ -13,6 +14,8 @@ from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
 from app.core.database import async_session_maker
+
+logger = logging.getLogger(__name__)
 
 _STOPWORDS = {
     "the", "a", "an", "of", "and", "to", "in", "is", "for", "on", "with", "by", "as", "at",
@@ -74,26 +77,31 @@ class CommunityReportService:
 
         generated = 0
         for (cid,) in comms:
-            members = await self._members(cid, top_members)
-            if not members:
-                continue
-            keywords = self._keywords(members)
-            report = await self._summarize(members)
-            async with async_session_maker() as s:
-                await s.execute(
-                    text("""
-                        UPDATE communities
-                        SET title = :t, summary = :su, keywords = :k, report_generated_at = now()
-                        WHERE id = :i
-                    """),
-                    {"t": report.title, "su": report.summary, "k": ",".join(keywords), "i": cid},
-                )
-                await s.commit()
-            generated += 1
+            try:
+                members = await self._members(cid, top_members)
+                if not members:
+                    continue
+                keywords = self._keywords(members)
+                report = await self._summarize(members)
+                async with async_session_maker() as s:
+                    await s.execute(
+                        text("""
+                            UPDATE communities
+                            SET title = :t, summary = :su, keywords = :k, report_generated_at = now()
+                            WHERE id = :i
+                        """),
+                        {"t": report.title, "su": report.summary, "k": ",".join(keywords), "i": cid},
+                    )
+                    await s.commit()
+                generated += 1
+            except Exception as exc:  # one bad community must not abort the whole batch
+                logger.warning("community %s report generation failed: %s", cid, exc)
         return {"communities": len(comms), "generated": generated}
 
     async def community_search(self, query: str, limit: int = 10) -> list[dict]:
         """Thematic search: ILIKE over title/summary/keywords (GraphRAG global complement)."""
+        # escape LIKE wildcards in user input (backslash is Postgres' default ESCAPE char)
+        esc = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         async with async_session_maker() as s:
             rows = (await s.execute(
                 text("""
@@ -102,6 +110,6 @@ class CommunityReportService:
                     ORDER BY size DESC
                     LIMIT :l
                 """),
-                {"q": f"%{query}%", "l": limit},
+                {"q": f"%{esc}%", "l": limit},
             )).all()
         return [{"community_id": r[0], "title": r[1], "summary": r[2], "size": r[3]} for r in rows]

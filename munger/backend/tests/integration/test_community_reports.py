@@ -78,3 +78,17 @@ def test_community_search_matches_report_text():
     hits = run_async(svc.community_search("mental models"))
     assert any(h["community_id"] == cid for h in hits)
     assert hits[0]["title"] == "Investing Principles"
+
+
+def test_community_search_escapes_wildcards():
+    cid = _seed_community([
+        ("Compound Interest", "money grows", 0.9),
+        ("Latticework", "mental models", 0.7),
+        ("Margin of Safety", "below value", 0.5),
+    ])
+    llm = ScriptedLLMService(scripts=[{"title": "Investing", "summary": "Compounding ideas."}])
+    svc = CommunityReportService(get_settings(), llm_service=llm)
+    run_async(svc.generate_reports(min_size=3))
+    # "%" must be treated literally (escaped), not as a match-all wildcard.
+    hits = run_async(svc.community_search("%"))
+    assert all(h["community_id"] != cid for h in hits)
