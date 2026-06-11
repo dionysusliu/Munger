@@ -10,8 +10,9 @@ Run them explicitly:
     TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.App.2026@localhost:5432/munger_test \
     .venv/bin/python -m pytest tests/live -m live_llm -v
 
-Optional overrides: LIVE_CHAT_MODEL (default openai/gpt-4o-mini), LIVE_EMBED_MODEL
+Optional overrides: LIVE_CHAT_MODEL (default deepseek/deepseek-v4-flash), LIVE_EMBED_MODEL
 (default qwen/qwen3-embedding-8b — must yield 768 dims to match the Vector(768) columns).
+The defaults are the project's configured OpenRouter models (verified passing).
 
 Default behavior: marked `integration` so pytest.ini's `addopts = -m "not integration"` DESELECTS
 them from the normal suite; and each skips cleanly when OPENROUTER_API_KEY is unset. Transient
@@ -59,7 +60,7 @@ def _live_settings() -> Settings:
     return Settings(
         LLM_DEFAULT_PROVIDER="openrouter",
         OPENROUTER_API_KEY=key,
-        LLM_DEFAULT_MODEL=os.getenv("LIVE_CHAT_MODEL", "openai/gpt-4o-mini"),
+        LLM_DEFAULT_MODEL=os.getenv("LIVE_CHAT_MODEL", "deepseek/deepseek-v4-flash"),
         LLM_EMBEDDING_MODEL=os.getenv("LIVE_EMBED_MODEL", "qwen/qwen3-embedding-8b"),
         LLM_EMBEDDING_DIMENSIONS=768,
     )

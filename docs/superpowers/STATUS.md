@@ -19,7 +19,7 @@ Current: **134 passed** (the 2 ignored tests need OpenRouter creds / a built fro
 OPENROUTER_API_KEY=sk-or-... TEST_DATABASE_URL=…/munger_test \
   .../.venv/bin/python -m pytest tests/live -m live_llm -v
 ```
-Optional: `LIVE_CHAT_MODEL` (default `openai/gpt-4o-mini`), `LIVE_EMBED_MODEL` (default `qwen/qwen3-embedding-8b`, must be 768-dim).
+Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_MODEL` (default `qwen/qwen3-embedding-8b`, must be 768-dim). Defaults = the project's OpenRouter models; **verified 4/4 passing** against real OpenRouter.
 
 ## Design spec (north-star)
 
