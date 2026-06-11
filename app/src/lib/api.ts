@@ -302,3 +302,19 @@ export async function feedbackRate(
     body: JSON.stringify({ message_id: messageId, rating, note }),
   });
 }
+
+export interface ChatSessionSummary {
+  id: number;
+  title: string | null;
+  created_at: string | null;
+  message_count: number;
+  last_message_at: string | null;
+}
+
+export async function chatListSessions(): Promise<{ sessions: ChatSessionSummary[] }> {
+  return apiFetch<{ sessions: ChatSessionSummary[] }>('/api/chat/sessions');
+}
+
+export async function chatDeleteSession(id: number): Promise<{ deleted: boolean }> {
+  return apiFetch<{ deleted: boolean }>(`/api/chat/sessions/${id}`, { method: 'DELETE' });
+}

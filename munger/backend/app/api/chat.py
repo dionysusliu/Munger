@@ -35,3 +35,13 @@ async def create_session_endpoint(title: str | None = None):
 @router.get("/sessions/{session_id}/messages")
 async def messages_endpoint(session_id: int):
     return {"session_id": session_id, "messages": await _service(with_llm=False).messages(session_id)}
+
+
+@router.get("/sessions")
+async def list_sessions_endpoint():
+    return {"sessions": await _service(with_llm=False).list_sessions()}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session_endpoint(session_id: int):
+    return {"deleted": await _service(with_llm=False).delete_session(session_id)}
