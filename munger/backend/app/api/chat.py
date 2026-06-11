@@ -1,6 +1,9 @@
 """Chat-over-retrieval endpoints (SP4.1)."""
 
+import json
+
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -18,6 +21,22 @@ class ChatRequest(BaseModel):
 def _service(with_llm: bool = True) -> ChatService:
     settings = get_settings()
     return ChatService(settings, llm_service=LLMService(settings) if with_llm else None)
+
+
+@router.post("/stream")
+async def chat_stream_endpoint(req: ChatRequest):
+    svc = _service(with_llm=True)
+    session_id = req.session_id or await svc.create_session()
+
+    async def _frames():
+        try:
+            async for event in svc.ask_stream(session_id, req.message):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:  # surface the error as a terminal SSE frame
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)[:300]})}\n\n"
+
+    return StreamingResponse(_frames(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("")

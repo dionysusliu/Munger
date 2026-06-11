@@ -118,6 +118,37 @@ class ChatService:
         return {"session_id": session_id, "answer": answer, "citations": citations,
                 "bridge": bridge, "assistant_message_id": assistant_message_id}
 
+    async def ask_stream(self, session_id: int, message: str, k: int = 8):
+        """Streaming ask: yields meta → delta* → done.
+
+        Persistence happens ONCE after the stream completes; a mid-stream failure
+        persists nothing (the user message is not recorded)."""
+        await self._autotitle(session_id, message)
+        results = await self.retrieval.search(message, k=k)
+
+        bridge: list[int] = []
+        if len(results) >= 2:
+            bridge = await self.graph.shortest_path(results[0]["entity_id"], results[1]["entity_id"])
+        name_map = await self._entity_names(bridge)
+        bridge_names = [name_map.get(b, str(b)) for b in bridge]
+
+        citations = [{"entity_id": r["entity_id"], "name": r["name"], "wiki": r.get("wiki")} for r in results]
+        yield {"type": "meta", "session_id": session_id, "citations": citations, "bridge": bridge}
+
+        history = await self._history(session_id)
+        context = self._format_context(results, bridge_names)
+        messages = [{"role": "system", "content": f"{_SYSTEM}\n\n{context}"}] + history + [
+            {"role": "user", "content": message}]
+
+        parts: list[str] = []
+        async for piece in self.llm.chat_stream(messages):
+            parts.append(piece)
+            yield {"type": "delta", "text": piece}
+
+        answer = "".join(parts)
+        assistant_message_id = await self._persist(session_id, message, answer, citations, bridge)
+        yield {"type": "done", "assistant_message_id": assistant_message_id, "answer": answer}
+
     async def _persist(self, session_id: int, user_msg: str, answer: str,
                        citations: list[dict], bridge: list[int]) -> int:
         async with async_session_maker() as s:

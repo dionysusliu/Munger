@@ -36,6 +36,12 @@ class ScriptedLLMService:
     async def embed_text(self, text: str) -> list[float]:
         return (await self.embed_texts([text]))[0]
 
+    async def chat_stream(self, messages: list[dict], **kwargs):
+        full = await self.chat(messages, **kwargs)
+        mid = max(1, len(full) // 2)
+        yield full[:mid]
+        yield full[mid:]
+
     async def summarize(self, text: str, max_length: int = 1000) -> str:
         return "Summary"
 

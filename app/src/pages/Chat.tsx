@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  chatSend,
+  chatSendStream,
   chatMessages,
   chatListSessions,
   chatDeleteSession,
@@ -25,6 +25,7 @@ interface ChatMessage {
   citations?: ChatCitation[];
   bridge?: number[];
   rating?: 1 | -1;
+  streaming?: boolean;
 }
 
 export default function Chat() {
@@ -37,6 +38,8 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   // Latest selected session — async history loads bail out if the user switched away.
   const activeSessionRef = useRef<number | null>(null);
+  // AbortController for in-flight stream — aborted on unmount / session switch.
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   async function loadSessions() {
     try {
@@ -46,6 +49,13 @@ export default function Chat() {
       // Silently ignore session list errors
     }
   }
+
+  // Abort any in-flight stream on unmount.
+  useEffect(() => {
+    return () => {
+      streamAbortRef.current?.abort();
+    };
+  }, []);
 
   // Load sessions list and restore active session on mount
   useEffect(() => {
@@ -97,16 +107,22 @@ export default function Chat() {
   }, [messages, sending]);
 
   function handleNewSession() {
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
     localStorage.removeItem(STORAGE_KEY);
     activeSessionRef.current = null;
     setSessionId(null);
     setMessages([]);
     setError(null);
     setInput('');
+    setSending(false);
   }
 
   async function handleSelectSession(sid: number) {
     if (sid === sessionId) return;
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+    setSending(false);
     setMessages([]);
     setError(null);
     setInput('');
@@ -151,32 +167,82 @@ export default function Chat() {
     if (!text || sending) return;
 
     const userMsg: ChatMessage = { role: 'user', content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    // Optimistic user bubble + placeholder streaming assistant bubble
+    const placeholderAssistant: ChatMessage = { role: 'assistant', content: '', streaming: true };
+    setMessages((prev) => [...prev, userMsg, placeholderAssistant]);
     setInput('');
     setSending(true);
     setError(null);
 
-    try {
-      const res = await chatSend(text, sessionId ?? undefined);
-      const newSid = res.session_id;
-      setSessionId(newSid);
-      localStorage.setItem(STORAGE_KEY, String(newSid));
+    const abortCtrl = new AbortController();
+    streamAbortRef.current = abortCtrl;
 
-      const assistantMsg: ChatMessage = {
-        id: res.assistant_message_id,
-        role: 'assistant',
-        content: res.answer,
-        citations: res.citations,
-        bridge: res.bridge,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+    // ES2022-safe helper: find the last in-flight streaming bubble index.
+    function lastStreamingIdx(arr: ChatMessage[]): number {
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i].streaming) return i;
+      }
+      return -1;
+    }
+
+    try {
+      await chatSendStream(
+        text,
+        sessionId ?? undefined,
+        (event) => {
+          if (event.type === 'meta') {
+            const newSid = event.session_id;
+            setSessionId(newSid);
+            localStorage.setItem(STORAGE_KEY, String(newSid));
+            // Set citations + bridge on the streaming bubble immediately
+            setMessages((prev) => {
+              const idx = lastStreamingIdx(prev);
+              if (idx === -1) return prev;
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], citations: event.citations, bridge: event.bridge };
+              return updated;
+            });
+          } else if (event.type === 'delta') {
+            setMessages((prev) => {
+              const idx = lastStreamingIdx(prev);
+              if (idx === -1) return prev;
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], content: updated[idx].content + event.text };
+              return updated;
+            });
+          } else if (event.type === 'done') {
+            setMessages((prev) => {
+              const idx = lastStreamingIdx(prev);
+              if (idx === -1) return prev;
+              const updated = [...prev];
+              updated[idx] = {
+                ...updated[idx],
+                id: event.assistant_message_id,
+                content: event.answer,
+                streaming: false,
+              };
+              return updated;
+            });
+          } else if (event.type === 'error') {
+            throw new Error(event.detail);
+          }
+        },
+        abortCtrl.signal,
+      );
       // Refresh list so counts + auto-titles update after every send
       await loadSessions();
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Aborted intentionally (session switch / unmount) — leave messages as-is
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Failed to send message');
-      // Remove the optimistic user message
-      setMessages((prev) => prev.slice(0, -1));
+      // Remove both the optimistic user bubble and the placeholder assistant bubble
+      setMessages((prev) => prev.slice(0, -2));
     } finally {
+      if (streamAbortRef.current === abortCtrl) {
+        streamAbortRef.current = null;
+      }
       setSending(false);
     }
   }
@@ -296,7 +362,7 @@ export default function Chat() {
             </div>
           ) : (
             <div className="space-y-4">
-              {messages.map((msg, idx) => (
+              {messages.filter((m) => !(m.streaming && m.content.length === 0)).map((msg, idx) => (
                 <motion.div
                   key={msg.id ?? `m-${idx}`}
                   initial={{ opacity: 0, y: 8 }}
@@ -394,8 +460,8 @@ export default function Chat() {
                 </motion.div>
               ))}
 
-              {/* Sending indicator */}
-              {sending && (
+              {/* Sending indicator — shows only before the first delta arrives */}
+              {sending && !messages.some((m) => m.streaming && m.content.length > 0) && (
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
