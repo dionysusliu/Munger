@@ -117,3 +117,33 @@ class TestWikiPrompts:
         assert "to_page_id" in SUGGEST_LINKS_SYSTEM
         assert "link_type" in SUGGEST_LINKS_SYSTEM
         assert '"context"' in SUGGEST_LINKS_SYSTEM
+
+
+class TestPackageExports:
+    def test_all_prompts_importable_from_package_root(self):
+        from app.prompts import (  # noqa: F401
+            ALIAS_TYPE_MAPPING,
+            ENTITY_TYPE_NAMES,
+            ENTITY_TYPES,
+            EXTRACT_SYSTEM,
+            GLEAN_SYSTEM,
+            GLEAN_YES_NO_SYSTEM,
+            LEGACY_TYPE_MAPPING,
+            NAMING_RULES,
+            PROF_MERGE_SYSTEM,
+            SAME_ENTITY_SYSTEM,
+            SUGGEST_LINKS_SYSTEM,
+            WIKI_TYPE_PROMPTS,
+            build_wiki_system,
+            ontology_block,
+        )
+
+    def test_prof_merge_keeps_math_notation(self):
+        from app.prompts import PROF_MERGE_SYSTEM
+
+        assert "$" in PROF_MERGE_SYSTEM
+
+    def test_same_entity_keeps_json_contract(self):
+        from app.prompts import SAME_ENTITY_SYSTEM
+
+        assert '"same"' in SAME_ENTITY_SYSTEM
