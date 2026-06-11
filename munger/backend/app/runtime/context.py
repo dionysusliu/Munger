@@ -11,6 +11,7 @@ from app.services.extraction_service import ExtractionService
 from app.services.linking_service import LinkingService
 from app.services.llm_service import LLMService
 from app.services.map_chunk_service import MapChunkService
+from app.services.community_report_service import CommunityReportService
 from app.services.entity_resolution_service import EntityResolutionService
 from app.services.resolution_service import ResolutionService
 from app.services.retrieval_service import RetrievalService
@@ -33,6 +34,7 @@ class RuntimeServices:
     edges: Optional[EdgeService] = None
     retrieval: Optional[RetrievalService] = None
     entity_resolution: Optional[EntityResolutionService] = None
+    community_report: Optional[CommunityReportService] = None
 
     @classmethod
     def from_settings(cls, settings: Settings, llm: Optional[LLMService] = None) -> "RuntimeServices":
@@ -48,6 +50,7 @@ class RuntimeServices:
         linking = LinkingService(llm_service=llm, settings=settings) if llm else None
         edges = EdgeService(settings)
         entity_resolution = EntityResolutionService(settings)
+        community_report = CommunityReportService(settings, llm_service=llm) if llm else None
         retrieval = RetrievalService(settings, llm_service=llm, edge_service=edges) if llm else None
         return cls(
             settings=settings,
@@ -63,4 +66,5 @@ class RuntimeServices:
             edges=edges,
             retrieval=retrieval,
             entity_resolution=entity_resolution,
+            community_report=community_report,
         )
