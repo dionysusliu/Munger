@@ -39,6 +39,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-10-sp3.2-retrieval-sharpening.md` | ✅ DONE — canonical-aware retrieval (COALESCE collapse) + vector seed-linking (existing entities HNSW, **no migration**) |
 | `2026-06-10-sp4.1-chat-over-retrieval.md` | ✅ DONE — `ChatService.ask` (read-only RAG: retrieve→bridge `shortest_path`→synthesize→persist), `chat_sessions`/`chat_messages` (mig 012), `GraphService.shortest_path`, `POST /api/chat` + session/messages |
 | `2026-06-10-sp4.2-feedback-writeback.md` | ✅ DONE — `FeedbackService` merge (labeled_pairs+resolve, reject also un-merges) / relate (`method='human'` relationship → edge rebuild) / rate (mig 013 `chat_messages.rating`); `POST /api/feedback/{merge,relate,rate}` |
+| `2026-06-11-sp2.4-graph-gc.md` | 🔄 IN PROGRESS — GraphGCService: auto-prune orphans + HITL low-value candidates + safe delete; `/api/gc/*` |
 | frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
