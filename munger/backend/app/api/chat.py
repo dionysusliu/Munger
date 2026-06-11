@@ -33,7 +33,7 @@ async def chat_stream_endpoint(req: ChatRequest):
             async for event in svc.ask_stream(session_id, req.message):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:  # surface the error as a terminal SSE frame
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)[:300]})}\n\n"
 
     return StreamingResponse(_frames(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

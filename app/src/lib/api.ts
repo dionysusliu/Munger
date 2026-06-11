@@ -352,4 +352,13 @@ export async function chatSendStream(
       if (frame.startsWith('data: ')) onEvent(JSON.parse(frame.slice(6)) as ChatStreamEvent);
     }
   }
+  // Abrupt close: best-effort flush of a final frame that arrived without its trailing \n\n.
+  const tail = buf.trim();
+  if (tail.startsWith('data: ')) {
+    try {
+      onEvent(JSON.parse(tail.slice(6)) as ChatStreamEvent);
+    } catch {
+      // incomplete JSON — nothing usable
+    }
+  }
 }
