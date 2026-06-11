@@ -1,7 +1,7 @@
 """Source management API routes for Munger."""
 import hashlib
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import logging
@@ -42,7 +42,7 @@ def _compute_file_hash(content: bytes) -> str:
 
 def _get_storage_path(filename: str, data_dir: str) -> str:
     """Build a year/month-based relative storage path for a source file."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     year = now.strftime("%Y")
     month = now.strftime("%m")
     directory = Path(data_dir) / "sources" / year / month

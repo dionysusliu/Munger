@@ -5,7 +5,7 @@ uvicorn[standard]==0.34.2
 python-multipart==0.0.20
 
 # Database
-sqlalchemy==2.0.40
+sqlalchemy>=2.0.50  # >=2.0.50 required by dbos (SP1)
 greenlet>=3.0.0
 alembic==1.15.2
 
@@ -43,6 +43,15 @@ langsmith>=0.3.45
 langgraph-checkpoint-postgres>=2.0.0
 psycopg[binary]>=3.2.0
 psycopg-pool>=3.2.0
+
+# Durable execution spine (SP1)
+dbos>=1.0.0
+
+# Graph algorithms (SP2.3): PageRank + Louvain communities. NetworkX — mature, broad
+# ecosystem, aligns with txtai's graph component; also provides betweenness_centrality +
+# shortest_path for SP4 cross-domain bridging.
+networkx>=3.2
+scipy>=1.11  # NetworkX pagerank backend
 
 # Dev
 debugpy==1.8.14

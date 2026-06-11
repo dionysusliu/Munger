@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     skills_dir: str = Field(default="./data/workflows", alias="MUNGER_SKILLS_DIR")
     builtin_skills_dir: str = Field(default="/app/builtin-workflows", alias="MUNGER_BUILTIN_SKILLS_DIR")
 
-    # Ingest orchestrator: "graph" (LangGraph subgraphs, default) | "agent" (legacy agent+gating)
+    # Ingest orchestrator: "graph" (LangGraph subgraphs, default) | "agent" (legacy) | "dbos" (durable spine)
     ingest_orchestrator: str = Field(default="graph", alias="INGEST_ORCHESTRATOR")
     # Map mode for the cognify subgraph: "send" (LangGraph Send fan-out) | "service" (legacy gather)
     ingest_map_mode: str = Field(default="send", alias="INGEST_MAP_MODE")
@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     ingest_map_stale_minutes: int = Field(default=15, alias="INGEST_MAP_STALE_MINUTES")
     ingest_instructor_enabled: bool = Field(default=True, alias="INGEST_INSTRUCTOR_ENABLED")
     ingest_allow_null_embedding: bool = Field(default=False, alias="INGEST_ALLOW_NULL_EMBEDDING")
+
+    # DBOS durable execution (SP1). System state lives in a schema inside the app DB.
+    dbos_app_name: str = Field(default="munger", alias="DBOS_APP_NAME")
+    dbos_system_schema: str = Field(default="dbos", alias="DBOS_SYSTEM_SCHEMA")
+    dbos_system_database_url: Optional[str] = Field(default=None, alias="DBOS_SYSTEM_DATABASE_URL")
 
     # Cross-chunk linking tunables (plan §4)
     link_fuzzy_ratio: int = Field(default=90, alias="INGEST_LINK_FUZZY_RATIO")
@@ -139,6 +144,15 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_ingest_orchestrator(self) -> "Settings":
+        allowed = {"graph", "agent", "dbos"}
+        if self.ingest_orchestrator not in allowed:
+            raise ValueError(
+                f"INGEST_ORCHESTRATOR={self.ingest_orchestrator!r} must be one of {sorted(allowed)}"
+            )
+        return self
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Derive subdirectories from data_dir
@@ -150,6 +164,10 @@ class Settings(BaseSettings):
         if not self.checkpointer_url and self.database_url.startswith("postgresql"):
             sync_url = self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
             self.checkpointer_url = sync_url
+        if not self.dbos_system_database_url and self.database_url.startswith("postgresql"):
+            self.dbos_system_database_url = self.database_url.replace(
+                "postgresql+psycopg://", "postgresql://", 1
+            )
         if self.worker_concurrency <= 0:
             import os as _os
 

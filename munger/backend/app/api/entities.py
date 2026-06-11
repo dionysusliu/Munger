@@ -1,5 +1,5 @@
 """Entity API routes for Munger."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -246,7 +246,7 @@ async def update_entity(
     entity.description = data.description
     entity.wiki_page_id = data.wiki_page_id
     entity.metadata_json = data.metadata_json
-    entity.updated_at = datetime.utcnow()
+    entity.updated_at = datetime.now(timezone.utc)
 
     await db.flush()
     await db.refresh(entity)

@@ -358,6 +358,12 @@ def make_cognify_nodes(services: RuntimeServices) -> dict:
                 except Exception as exc:
                     logger.warning("Index update failed: %s", exc)
 
+            if getattr(services, "edges", None):
+                try:
+                    await services.edges.update_for_source(source_id)
+                except Exception as exc:
+                    logger.warning("Edge rollup failed for %s: %s", source_id, exc)
+
             await update_source_status(source_id, "completed")
             await log_ingestion(source_id, f"Ingested with {len(entities)} entities")
             await emit_pipeline_summary(

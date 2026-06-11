@@ -81,7 +81,11 @@ async def reset_checkpointer() -> None:
     if _checkpointer_pool is not None:
         try:
             await _checkpointer_pool.close()
-        except Exception:
+        except BaseException:
+            # asyncio.CancelledError (a BaseException, not Exception) is raised when
+            # pool.close() is called from a different event loop than the pool was
+            # created in (e.g. after asyncio.run() teardown).  Catching BaseException
+            # ensures we always reset the singleton regardless.
             logger.warning("Error during checkpointer pool cleanup", exc_info=True)
         _checkpointer_pool = None
     _checkpointer = None

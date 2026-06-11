@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, List, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import String, Text, DateTime, Integer, ForeignKey
+from sqlalchemy import Double, String, Text, DateTime, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -25,6 +25,13 @@ class Entity(Base):
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mention_count: Mapped[int] = mapped_column(Integer, default=1)
     embedding: Mapped[Optional[Any]] = mapped_column(Vector(768), nullable=True)
+    salience: Mapped[float] = mapped_column(Double, default=0.0)
+    canonical_entity_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("entities.id", ondelete="SET NULL"), nullable=True
+    )
+    community_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("communities.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

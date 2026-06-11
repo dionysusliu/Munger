@@ -84,20 +84,22 @@ class TestReduceProfMerge:
 
         run_async(_check())
 
-    def test_reconciles_with_existing_global_description(self):
+    def test_global_description_keeps_existing_when_longer(self):
+        """Global reconciliation is deterministic (no LLM) and keeps the longer
+        description, so re-ingesting a source is idempotent across retries."""
         mock_settings = _mock_settings()
         llm = AsyncMock()
-        llm.chat = AsyncMock(return_value="Reconciled global description")
+        llm.chat = AsyncMock(return_value="LLM MUST NOT be used for global reconcile")
         service = ResolutionService(llm_service=llm, settings=mock_settings)
 
         async def _setup():
             async with async_session_maker() as session:
                 source = Source(
-                    title="Reconcile Test",
-                    filename="r.txt",
-                    file_path="sources/r.txt",
+                    title="Reconcile Keep",
+                    filename="rk.txt",
+                    file_path="sources/rk.txt",
                     file_type="txt",
-                    content_hash="hash-r",
+                    content_hash="hash-rk",
                     file_size=50,
                     content_text="Bob works here.",
                     status="extracting",
@@ -106,13 +108,14 @@ class TestReduceProfMerge:
                 await session.commit()
                 await session.refresh(source)
 
-                existing = Entity(
-                    name="Bob",
-                    entity_type="person",
-                    description="Existing global bio",
-                    mention_count=2,
+                session.add(
+                    Entity(
+                        name="Bob",
+                        entity_type="person",
+                        description="A detailed existing global biography of Bob",
+                        mention_count=2,
+                    )
                 )
-                session.add(existing)
 
                 chunk = Chunk(
                     source_id=source.id,
@@ -131,7 +134,7 @@ class TestReduceProfMerge:
                         chunk_id=chunk.id,
                         source_id=source.id,
                         glean_round=0,
-                        entities=[{"name": "Bob", "type": "person", "description": "New source bio"}],
+                        entities=[{"name": "Bob", "type": "person", "description": "Bob"}],
                         relationships=[],
                     )
                 )
@@ -146,6 +149,81 @@ class TestReduceProfMerge:
                 entity = (
                     await session.execute(select(Entity).where(Entity.name == "Bob"))
                 ).scalar_one()
-                assert entity.description == "Reconciled global description"
+                # Existing (longer) description preserved; shorter candidate ignored.
+                assert entity.description == "A detailed existing global biography of Bob"
 
         run_async(_check())
+        # Determinism guarantee: global reconciliation never invokes the LLM.
+        assert llm.chat.await_count == 0
+
+    def test_global_description_replaced_when_candidate_longer(self):
+        """Deterministic longest-wins: a longer description from the new source
+        replaces the shorter existing one, still without invoking the LLM."""
+        mock_settings = _mock_settings()
+        llm = AsyncMock()
+        llm.chat = AsyncMock(return_value="LLM MUST NOT be used for global reconcile")
+        service = ResolutionService(llm_service=llm, settings=mock_settings)
+
+        longer = "A much richer and longer description of Bob from the new source"
+
+        async def _setup():
+            async with async_session_maker() as session:
+                source = Source(
+                    title="Reconcile Replace",
+                    filename="rr.txt",
+                    file_path="sources/rr.txt",
+                    file_type="txt",
+                    content_hash="hash-rr",
+                    file_size=50,
+                    content_text="Bob works here.",
+                    status="extracting",
+                )
+                session.add(source)
+                await session.commit()
+                await session.refresh(source)
+
+                session.add(
+                    Entity(
+                        name="Bob",
+                        entity_type="person",
+                        description="Bob",
+                        mention_count=2,
+                    )
+                )
+
+                chunk = Chunk(
+                    source_id=source.id,
+                    chunk_index=0,
+                    content="Bob works",
+                    token_count=3,
+                    doc_char_start=0,
+                    doc_char_end=10,
+                )
+                session.add(chunk)
+                await session.commit()
+                await session.refresh(chunk)
+
+                session.add(
+                    ChunkExtraction(
+                        chunk_id=chunk.id,
+                        source_id=source.id,
+                        glean_round=0,
+                        entities=[{"name": "Bob", "type": "person", "description": longer}],
+                        relationships=[],
+                    )
+                )
+                await session.commit()
+                return source.id
+
+        source_id = run_async(_setup())
+        run_async(service.reduce_entities(source_id))
+
+        async def _check():
+            async with async_session_maker() as session:
+                entity = (
+                    await session.execute(select(Entity).where(Entity.name == "Bob"))
+                ).scalar_one()
+                assert entity.description == longer
+
+        run_async(_check())
+        assert llm.chat.await_count == 0

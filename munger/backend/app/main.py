@@ -5,7 +5,7 @@ LLM Wiki and Charlie Munger's multi-dimensional thinking framework.
 """
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -127,7 +127,7 @@ async def health_check():
     return {
         "status": "healthy",
         "version": settings.app_version,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -156,7 +156,7 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
     total_links = link_count_result.scalar()
 
     # Recent counts (last 7 days)
-    week_ago = datetime.utcnow() - timedelta(days=7)
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
     recent_sources_result = await db.execute(
         select(func.count(Source.id)).where(Source.created_at >= week_ago)
