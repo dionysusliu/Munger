@@ -84,3 +84,68 @@ class RetrievalService:
         scores = await self.graph.personalized_pagerank({s: 1.0 for s in seeds})
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
         return [eid for eid, _ in ranked[:limit]]
+
+    @staticmethod
+    def _rrf(ranked_lists: list[list[int]], k: int = RRF_K) -> dict[int, float]:
+        scores: dict[int, float] = {}
+        for lst in ranked_lists:
+            for rank, eid in enumerate(lst):
+                scores[eid] = scores.get(eid, 0.0) + 1.0 / (k + rank + 1)
+        return scores
+
+    async def search(self, query: str, k: int = 20, salience_weight: float = 0.5) -> list[dict]:
+        """Entity-centric retrieval: link -> recall(3) -> RRF -> salience rerank -> assemble top-k."""
+        seeds = await self.link_seeds(query)
+        qvec = await self.llm.embed_text(query) if self.llm is not None else None
+
+        vector_ids = await self._vector_entities(qvec) if qvec is not None else []
+        lexical_ids = await self._lexical_entities(query)
+        graph_ids = await self._graph_entities(seeds)
+
+        fused = self._rrf([vector_ids, lexical_ids, graph_ids])
+        if not fused:
+            return []
+
+        ids = list(fused.keys())
+        async with async_session_maker() as s:
+            sal_rows = (await s.execute(
+                text("SELECT id, COALESCE(salience, 0.0) FROM entities WHERE id = ANY(:ids)"),
+                {"ids": ids},
+            )).all()
+        salience = {r[0]: float(r[1]) for r in sal_rows}
+        reranked = sorted(
+            ids, key=lambda e: fused[e] * (1.0 + salience_weight * salience.get(e, 0.0)), reverse=True
+        )[:k]
+
+        return [await self._assemble(e, fused[e], salience.get(e, 0.0)) for e in reranked]
+
+    async def _assemble(self, entity_id: int, score: float, salience: float) -> dict:
+        async with async_session_maker() as s:
+            ent = (await s.execute(
+                text("SELECT id, name, entity_type, description, wiki_page_id, community_id "
+                     "FROM entities WHERE id = :i"),
+                {"i": entity_id},
+            )).first()
+            mentions = (await s.execute(
+                text("SELECT source_id, chunk_id, context FROM entity_mentions "
+                     "WHERE entity_id = :i AND context IS NOT NULL LIMIT 3"),
+                {"i": entity_id},
+            )).all()
+            wiki = None
+            if ent and ent[4] is not None:
+                wiki = (await s.execute(
+                    text("SELECT slug, title FROM wiki_pages WHERE id = :i"), {"i": ent[4]},
+                )).first()
+        neighbors = await self.edges.top_neighbors(entity_id, k=5)
+        return {
+            "entity_id": entity_id,
+            "name": ent[1] if ent else None,
+            "entity_type": ent[2] if ent else None,
+            "description": ent[3] if ent else None,
+            "community_id": ent[5] if ent else None,
+            "score": score,
+            "salience": salience,
+            "wiki": {"slug": wiki[0], "title": wiki[1]} if wiki else None,
+            "mentions": [{"source_id": m[0], "chunk_id": m[1], "context": m[2]} for m in mentions],
+            "neighbors": neighbors,
+        }

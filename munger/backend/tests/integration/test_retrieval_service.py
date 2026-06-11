@@ -117,3 +117,29 @@ def test_link_seeds_exact_and_ilike():
             return (await s.execute(text("SELECT name FROM entities WHERE id=:i"), {"i": eid})).scalar()
     names = [run_async(_name(e)) for e in seeds]
     assert "Compound Interest" in names
+
+
+def test_search_fuses_channels_and_assembles():
+    async def _setup():
+        async with async_session_maker() as s:
+            src = _make_source(s); await s.flush()
+            ea = Entity(name="Alpha", entity_type="concept", salience=0.9)
+            eb = Entity(name="Beta", entity_type="concept", salience=0.1)
+            s.add(ea); s.add(eb); await s.flush()
+            ca = _chunk(src.id, 0, "alpha doc", _vec(0))
+            s.add(ca); await s.flush()
+            s.add(EntityMention(entity_id=ea.id, chunk_id=ca.id, context="alpha appears here"))
+            lo, hi = (ea.id, eb.id) if ea.id < eb.id else (eb.id, ea.id)
+            s.add(EntityEdge(src_entity_id=lo, tgt_entity_id=hi, weight=4.0, evidence_count=1))
+            await s.commit()
+            return ea.id, eb.id
+
+    a_id, b_id = run_async(_setup())
+    results = run_async(_svc().search("alpha", k=10))
+    assert results, "search returned nothing"
+    ids = [r["entity_id"] for r in results]
+    assert a_id in ids
+    top = results[0]
+    assert top["entity_id"] == a_id
+    assert "name" in top and "score" in top
+    assert "mentions" in top and "neighbors" in top
