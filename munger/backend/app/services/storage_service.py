@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import UploadFile
 
 from app.core.config import Settings
+from app.services.text_normalizer import normalize_extracted_text
 
 logger = logging.getLogger(__name__)
 
@@ -183,19 +184,20 @@ class StorageService:
 
         try:
             if file_type == "pdf":
-                return await self._extract_pdf(full_path)
+                text = await self._extract_pdf(full_path)
             elif file_type in ("html", "htm", "url"):
-                return await self._extract_html(full_path)
+                text = await self._extract_html(full_path)
             elif file_type in ("md", "markdown"):
-                return await self._extract_markdown(full_path)
+                text = await self._extract_markdown(full_path)
             elif file_type in ("txt", "text"):
-                return await self._extract_text_file(full_path)
+                text = await self._extract_text_file(full_path)
             elif file_type in ("docx", "doc"):
-                return await self._extract_docx(full_path)
+                text = await self._extract_docx(full_path)
             else:
                 # Fallback: try to read as text
                 logger.warning(f"Unknown file type '{file_type}', attempting text extraction")
-                return await self._extract_text_file(full_path)
+                text = await self._extract_text_file(full_path)
+            return normalize_extracted_text(text)
         except Exception as e:
             logger.error(f"Text extraction failed for {full_path}: {e}")
             raise TextExtractionError(f"Failed to extract text from {file_type}: {e}") from e
