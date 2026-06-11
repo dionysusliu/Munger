@@ -61,7 +61,44 @@ class ChatService:
                 text("SELECT id, name FROM entities WHERE id = ANY(:ids)"), {"ids": ids})).all()
         return {r[0]: r[1] for r in rows}
 
+    async def list_sessions(self, limit: int = 50) -> list[dict]:
+        """Sessions newest-first with message counts (for the session-list UI)."""
+        async with async_session_maker() as s:
+            rows = (await s.execute(
+                text("""
+                    SELECT cs.id, cs.title, cs.created_at,
+                           COUNT(cm.id) AS message_count, MAX(cm.created_at) AS last_message_at
+                    FROM chat_sessions cs
+                    LEFT JOIN chat_messages cm ON cm.session_id = cs.id
+                    GROUP BY cs.id, cs.title, cs.created_at
+                    ORDER BY cs.id DESC
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            )).all()
+        return [{"id": r[0], "title": r[1],
+                 "created_at": r[2].isoformat() if r[2] else None,
+                 "message_count": int(r[3]),
+                 "last_message_at": r[4].isoformat() if r[4] else None} for r in rows]
+
+    async def delete_session(self, session_id: int) -> bool:
+        """Delete a session (messages CASCADE). Returns False when it didn't exist."""
+        async with async_session_maker() as s:
+            res = await s.execute(
+                text("DELETE FROM chat_sessions WHERE id = :i"), {"i": session_id})
+            await s.commit()
+            return bool(res.rowcount)
+
+    async def _autotitle(self, session_id: int, message: str) -> None:
+        """First user message becomes the title of an untitled session (<=60 chars)."""
+        async with async_session_maker() as s:
+            await s.execute(
+                text("UPDATE chat_sessions SET title = :t WHERE id = :i AND title IS NULL"),
+                {"t": message.strip()[:60], "i": session_id})
+            await s.commit()
+
     async def ask(self, session_id: int, message: str, k: int = 8) -> dict:
+        await self._autotitle(session_id, message)
         results = await self.retrieval.search(message, k=k)
 
         bridge: list[int] = []
