@@ -1,10 +1,10 @@
 # Munger Rearchitecture — STATUS / Manifest
 
-Single entry point for resuming work. Last updated 2026-06-10.
+Single entry point for resuming work. Last updated 2026-06-11.
 
 ## Where things are
 
-**Branch:** `worktree-frontend-chat` (worktree: `.claude/worktrees/frontend-chat`), off `main`. `main` now has SP0.1–SP4.2 + live-LLM tests (PR #3–#9 merged). This branch adds the **frontend chat panel** (+ chat message-id exposure); a fresh PR brings it in.
+**Branch:** `worktree-frontend-chat` (worktree: `.claude/worktrees/frontend-chat`), off `main`. `main` now has SP0.1–SP4.2 + live-LLM tests (PR #3–#9 merged). This branch adds the **frontend chat panel** (+ chat message-id exposure); a fresh PR brings it in. Latest: `claude/cranky-lumiere-793820` adds prompt overhaul phase 1 (7-type ontology + prompts module + text normalizer, mig 015).
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **178 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **236 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 **Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
 ```
@@ -46,6 +46,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | SP3.3 ranked community search (no SP doc) | ✅ DONE — generated tsvector + GIN (mig 014); community_search ts_rank-ordered w/ ILIKE fallback |
 | multi-session chat (no SP doc) | ✅ DONE — backend list/delete sessions + auto-title from first message; frontend session rail (list/switch/new/delete, race-guarded) |
 | frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |
+| `2026-06-11-prompt-ontology-phase1.md` | ✅ DONE — 7-type ontology + `app/prompts/` module + `text_normalizer` ($...$ math) + mig 015; phase 2 (enrichment) not started |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
 

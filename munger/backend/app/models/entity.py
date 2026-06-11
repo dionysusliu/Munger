@@ -16,8 +16,8 @@ class Entity(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), index=True)
     entity_type: Mapped[str] = mapped_column(String(50))
-    # person, concept, model, mechanism, incentive_structure,
-    # book, paper, organization, field, event, principle
+    # 7-type ontology (see app/prompts/ontology.py): person, organization, work,
+    # concept, mental_model, mechanism, event
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     wiki_page_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("wiki_pages.id"), nullable=True

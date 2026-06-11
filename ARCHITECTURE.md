@@ -131,6 +131,23 @@ Ingest is **asynchronous**: `POST /api/sources/{id}/ingest` returns **202** with
 
 Source files stay on disk under `DATA_DIR/sources/`; the DB holds metadata and extracted text.
 
+### Entity ontology & prompt module
+
+All LLM prompt text lives in `munger/backend/app/prompts/` — `ontology.py` is the
+single source of truth for the 7-type entity vocabulary (`person`, `organization`,
+`work`, `concept`, `mental_model`, `mechanism`, `event`), the naming rules
+(document-local labels like "Theorem 2" are never extracted), and the legacy-type
+mappings applied by migration 015. `extraction.py` / `wiki.py` / `resolution.py`
+assemble the extraction, wiki-generation, and resolution prompts from it; services
+import these constants and never define prompt text inline.
+
+Parser output is cleaned by `app/services/text_normalizer.py` before chunking:
+formula image refs (`![O(\log N)](dead.png)`) become `$...$` inline math and dead
+figure refs become `*[Figure: alt]*` placeholders, so math renders through the
+frontend's existing remark-math + KaTeX chain. Generated `[[wikilinks]]` may point
+to pages that don't exist yet (red links) — they render as `?unresolved` and are
+the feedstock for the phase-2 enrichment pipeline.
+
 ---
 
 ## Ingest pipeline (LangGraph subgraphs)
