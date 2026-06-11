@@ -69,12 +69,14 @@ def ontology_block() -> str:
             f"- {name}: {info['definition']} Example: {info['example']}. "
             f"NOT: {info['counter_example']}."
         )
+    lines.append("")
     lines.append(TYPE_PRIORITY)
     return "\n".join(lines)
 
 
 # Exact mapping of the retired legacy vocabulary (used by migration 015 and
-# runtime normalization). The other five legacy names survive unchanged.
+# runtime normalization). The five legacy names that survive unchanged in the
+# 7-type vocab (person, organization, concept, mechanism, event) need no entry.
 LEGACY_TYPE_MAPPING: dict[str, str] = {
     "book": "work",
     "paper": "work",

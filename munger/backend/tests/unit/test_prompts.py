@@ -47,6 +47,7 @@ class TestOntologyVocabulary:
         for name in ENTITY_TYPE_NAMES:
             assert name in block
         assert "..." not in block
+        assert "mental_model over mechanism" in block
 
     def test_naming_rules_ban_document_local_labels(self):
         for banned in ("Theorem N", "Figure N", "Table N", "Section N"):
