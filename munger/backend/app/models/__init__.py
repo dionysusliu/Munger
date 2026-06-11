@@ -11,6 +11,7 @@ from app.models.chunk_extraction import ChunkExtraction
 from app.models.entity_relationship import EntityRelationship
 from app.models.entity_edge import EntityEdge
 from app.models.community import Community
+from app.models.labeled_pair import LabeledPair
 
 __all__ = [
     "Source",
@@ -28,4 +29,5 @@ __all__ = [
     "EntityRelationship",
     "EntityEdge",
     "Community",
+    "LabeledPair",
 ]
