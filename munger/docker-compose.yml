@@ -76,6 +76,11 @@ services:
       dockerfile: Dockerfile
     container_name: munger-worker
     command: python -m app.worker
+    # The image-level HEALTHCHECK probes the API's :8000/api/health, but this
+    # container runs the queue worker with no HTTP server — disable it so the
+    # worker doesn't report a phantom "unhealthy" forever.
+    healthcheck:
+      disable: true
     volumes:
       - ./data:/app/data
       - ./data/sources:/app/data/sources
