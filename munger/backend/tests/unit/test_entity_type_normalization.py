@@ -23,14 +23,36 @@ class TestNormalizeEntityType:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
+            # casing + space normalization (canonical path after " "->"_")
             ("Person", "person"),
             ("mental model", "mental_model"),
             ("Mental Model", "mental_model"),
-            ("framework", "mental_model"),
+            # legacy vocabulary, hardcoded as independent evidence
+            ("book", "work"),
+            ("paper", "work"),
+            ("model", "mental_model"),
+            ("principle", "mental_model"),
+            ("incentive_structure", "mechanism"),
+            ("field", "concept"),
+            # alias layer — all 18 entries pinned to exact targets
+            ("people", "person"),
+            ("individual", "person"),
+            ("author", "person"),
             ("company", "organization"),
+            ("institution", "organization"),
             ("article", "work"),
-            ("incentive", "mechanism"),
+            ("publication", "work"),
             ("idea", "concept"),
+            ("notion", "concept"),
+            ("discipline", "concept"),
+            ("domain", "concept"),
+            ("framework", "mental_model"),
+            ("law", "mental_model"),
+            ("rule", "mental_model"),
+            ("process", "mechanism"),
+            ("system", "mechanism"),
+            ("incentive", "mechanism"),
+            ("incentives", "mechanism"),
         ],
     )
     def test_aliases_and_casing(self, service, raw, expected):
