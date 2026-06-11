@@ -376,6 +376,33 @@ async def trigger_ingest(
     }
 
 
+@router.get("/{source_id}/jobs")
+async def list_source_jobs(source_id: int, db: AsyncSession = Depends(get_db)):
+    """Return newest-first job history with event-derived duration for a source."""
+    jobs = (await db.execute(
+        select(IngestJob).where(IngestJob.source_id == source_id).order_by(IngestJob.id.desc()).limit(20)
+    )).scalars().all()
+    if not jobs:
+        return {"source_id": source_id, "jobs": []}
+    job_ids = [j.id for j in jobs]
+    spans = (await db.execute(
+        select(IngestEvent.job_id,
+               func.min(IngestEvent.created_at), func.max(IngestEvent.created_at))
+        .where(IngestEvent.job_id.in_(job_ids))
+        .group_by(IngestEvent.job_id)
+    )).all()
+    span_map = {r[0]: (r[1], r[2]) for r in spans}
+    out = []
+    for j in jobs:
+        first, last = span_map.get(j.id, (None, None))
+        duration_ms = int((last - first).total_seconds() * 1000) if first and last else None
+        out.append({"id": j.id, "status": j.status,
+                    "created_at": j.created_at.isoformat() if j.created_at else None,
+                    "updated_at": j.updated_at.isoformat() if j.updated_at else None,
+                    "error_message": j.error_message, "duration_ms": duration_ms})
+    return {"source_id": source_id, "jobs": out}
+
+
 @router.post("/{source_id}/backfill", status_code=status.HTTP_202_ACCEPTED)
 async def backfill_source(
     source_id: int,
