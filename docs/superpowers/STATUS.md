@@ -4,7 +4,7 @@ Single entry point for resuming work. Last updated 2026-06-10.
 
 ## Where things are
 
-**Branch:** `worktree-sp2.2-entity-resolution` (worktree: `.claude/worktrees/sp2.2-entity-resolution`). **PR #3 was merged early at `609a725` (index audit) — `main` LACKS SP3.1 + SP2.2.** This branch carries the SP3.1 + SP2.2 delta off `main`; a fresh PR brings them in.
+**Branch:** `worktree-sp2.3b-community-reports` (worktree: `.claude/worktrees/sp2.3b-community-reports`), off `main`. `main` now has SP0.1–SP3.1 + SP2.2 (PR #3 + #4 merged). This branch adds **SP2.3b**; a fresh PR brings it in.
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **115 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **123 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 ## Design spec (north-star)
 
@@ -27,7 +27,7 @@ Current: **115 passed** (the 2 ignored tests need OpenRouter creds / a built fro
 | `2026-06-10-sp2.1-graph-edges-foundation.md` | ✅ DONE — `entity_edges` + `EdgeService` (mig 007) |
 | `2026-06-10-sp2.3-salience-communities.md` | ✅ DONE — `GraphService` PageRank+Louvain (mig 008) |
 | `2026-06-10-sp2.2-entity-resolution.md` | ✅ DONE — `EntityResolutionService`: block(trgm)→score→cluster → soft-merge `canonical_entity_id` + `labeled_pairs` HITL + `unmerge` + `_flatten_chains` (mig 010); `POST /api/entities/{resolve,unmerge,label}` |
-| **SP2.3b** (community reports) | ⏳ TODO — LLM summaries + bm25/tfidf topic-labels (txtai-style) per community → GraphRAG global search |
+| `2026-06-10-sp2.3b-community-reports.md` | ✅ DONE — `CommunityReportService`: per-community LLM title/summary + deterministic keyword label (mig 011) + `community_search` (ILIKE); `POST /api/communities/reports`, `GET /search` |
 | `2026-06-10-sp3.1-retrieval.md` | ✅ DONE — `RetrievalService`: link + 3-channel (vector/lexical/graph-PPR) + RRF + salience rerank + assemble; `GET /api/search/retrieve` |
 | **SP3.2** (vector entity-linking) | ⏳ TODO — `entities.embedding` HNSW (migration) + vector seed-linking + canonical-aware retrieval (COALESCE) |
 | **SP4** (chat over retrieval) | ⏳ TODO — conservative read-write chat; smolagents candidate; structural-hole bridging via `showpath`/`betweenness` |
@@ -49,6 +49,7 @@ Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy
 - Migrations: `alembic/versions/007_*` (entity_edges), `008_*` (communities), `009_*` (index audit)
 - Retrieval (SP3.1): `app/services/retrieval_service.py` (link + vector/lexical/graph-PPR + RRF + assemble), `GraphService.personalized_pagerank`, `app/api/retrieval.py` (`GET /api/search/retrieve`), `RuntimeServices.retrieval`
 - Resolution (SP2.2): `app/services/entity_resolution_service.py` (block/score/resolve/unmerge/label + `_flatten_chains`), `app/models/labeled_pair.py` (mig 010), `app/api/resolution.py`, `RuntimeServices.entity_resolution`
+- Community reports (SP2.3b): `app/services/community_report_service.py` (generate_reports keywords+LLM summary, community_search), `app/api/communities.py`, `communities.title/summary/keywords` (mig 011), `RuntimeServices.community_report`
 
 ## Deferred / scale (per the txtai review)
 
