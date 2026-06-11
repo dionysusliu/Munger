@@ -14,6 +14,7 @@ from app.services.map_chunk_service import MapChunkService
 from app.services.chat_service import ChatService
 from app.services.community_report_service import CommunityReportService
 from app.services.entity_resolution_service import EntityResolutionService
+from app.services.feedback_service import FeedbackService
 from app.services.resolution_service import ResolutionService
 from app.services.retrieval_service import RetrievalService
 from app.services.storage_service import StorageService
@@ -37,6 +38,7 @@ class RuntimeServices:
     entity_resolution: Optional[EntityResolutionService] = None
     community_report: Optional[CommunityReportService] = None
     chat: Optional[ChatService] = None
+    feedback: Optional[FeedbackService] = None
 
     @classmethod
     def from_settings(cls, settings: Settings, llm: Optional[LLMService] = None) -> "RuntimeServices":
@@ -55,6 +57,7 @@ class RuntimeServices:
         community_report = CommunityReportService(settings, llm_service=llm) if llm else None
         retrieval = RetrievalService(settings, llm_service=llm, edge_service=edges) if llm else None
         chat = ChatService(settings, llm_service=llm, retrieval=retrieval) if llm else None
+        feedback = FeedbackService(settings)
         return cls(
             settings=settings,
             storage=storage,
@@ -71,4 +74,5 @@ class RuntimeServices:
             entity_resolution=entity_resolution,
             community_report=community_report,
             chat=chat,
+            feedback=feedback,
         )

@@ -4,7 +4,7 @@ Single entry point for resuming work. Last updated 2026-06-10.
 
 ## Where things are
 
-**Branch:** `worktree-sp4-chat` (worktree: `.claude/worktrees/sp4-chat`), off `main`. `main` now has SP0.1–SP3.2 (PR #3–#6 merged). This branch adds **SP4.1** (chat over retrieval); a fresh PR brings it in.
+**Branch:** `worktree-sp4.2-feedback` (worktree: `.claude/worktrees/sp4.2-feedback`), off `main`. `main` now has SP0.1–SP4.1 + live-LLM tests (PR #3–#8 merged). This branch adds **SP4.2** (feedback write-back); a fresh PR brings it in.
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **134 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **144 passed** (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 **Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
 ```
@@ -38,7 +38,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-10-sp3.1-retrieval.md` | ✅ DONE — `RetrievalService`: link + 3-channel (vector/lexical/graph-PPR) + RRF + salience rerank + assemble; `GET /api/search/retrieve` |
 | `2026-06-10-sp3.2-retrieval-sharpening.md` | ✅ DONE — canonical-aware retrieval (COALESCE collapse) + vector seed-linking (existing entities HNSW, **no migration**) |
 | `2026-06-10-sp4.1-chat-over-retrieval.md` | ✅ DONE — `ChatService.ask` (read-only RAG: retrieve→bridge `shortest_path`→synthesize→persist), `chat_sessions`/`chat_messages` (mig 012), `GraphService.shortest_path`, `POST /api/chat` + session/messages |
-| **SP4.2** (feedback write-back) | ⏳ TODO — conservative graph edits from chat feedback (the self-improvement loop) |
+| `2026-06-10-sp4.2-feedback-writeback.md` | ✅ DONE — `FeedbackService` merge (labeled_pairs+resolve, reject also un-merges) / relate (`method='human'` relationship → edge rebuild) / rate (mig 013 `chat_messages.rating`); `POST /api/feedback/{merge,relate,rate}` |
 | **frontend chat panel** | ⏳ TODO — `/chat` route + `Chat.tsx` (backend API ready) |
 
 Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy `entity_graph_edges` matview).
@@ -60,6 +60,7 @@ Index audit (no SP): **migration 009** done (FK/hot-path indexes; dropped legacy
 - Resolution (SP2.2): `app/services/entity_resolution_service.py` (block/score/resolve/unmerge/label + `_flatten_chains`), `app/models/labeled_pair.py` (mig 010), `app/api/resolution.py`, `RuntimeServices.entity_resolution`
 - Community reports (SP2.3b): `app/services/community_report_service.py` (generate_reports keywords+LLM summary, community_search), `app/api/communities.py`, `communities.title/summary/keywords` (mig 011), `RuntimeServices.community_report`
 - Chat (SP4.1): `app/services/chat_service.py` (read-only RAG ask: retrieve→bridge→synthesize→persist + history), `GraphService.shortest_path`, `app/models/chat_session.py`/`chat_message.py` (mig 012), `app/api/chat.py` (`POST /api/chat` + sessions/messages), `RuntimeServices.chat`
+- Feedback (SP4.2): `app/services/feedback_service.py` (merge: labeled_pairs+resolve, reject un-merges the pair; relate: human EntityRelationship→edge rebuild, service-level dedup; rate: ±1 on assistant turns, mig 013), `app/api/feedback.py`, `RuntimeServices.feedback`. Rating CONSUMER deferred (rerank boost later)
 
 ## Deferred / scale (per the txtai review)
 
