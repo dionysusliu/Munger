@@ -1,4 +1,4 @@
-# OTel Stack Design — Unified Traces / Metrics / Logs
+# SP6 — OTel Stack Design (Unified Traces / Metrics / Logs)
 
 **Date:** 2026-06-12 · **Status:** approved (brainstormed)
 **Motivation:** Long pipeline runs (job-4 incident: aborted after 30+ min of babysitting) are unobservable without a human polling. Agents and humans should answer "where did this run spend time / how many LLM calls / where is it stuck / what errored" with **plain REST calls** against a standing observability stack.

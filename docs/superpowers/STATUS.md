@@ -46,6 +46,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-11-ingest-observability-ui.md` | ✅ DONE — React Flow pipeline DAG (server-driven `/api/pipeline/topology`) + stage drawer + Gantt + map donut + run history (`/api/sources/{id}/jobs`); replaces the text stepper |
 | `2026-06-11-linking-diet.md` | ✅ DONE — co-mention diet (extract-only mentions + min-shared≥2 → 21.5k edges to ~100s), wiki mention gate (≥2 default), per-step LLM call/time telemetry; + DBOS zombie-replay test flake root-caused & fixed |
 | `2026-06-12-pipeline-bench.md` | ✅ T1 DONE — deterministic pipeline bench (synthetic corpus, regression bounds, JSON report; marker `bench`); conftest tolerates parallel-session DB stamps. T2 live tier deferred |
+| **SP6** OTel stack (`specs/2026-06-12-otel-stack-design.md`) | 🔄 IN PROGRESS — spec approved (LGTM all-in-one, compose-on/bare-off, native REST query); plan + implementation next |
 | SP3.3 ranked community search (no SP doc) | ✅ DONE — generated tsvector + GIN (mig 014); community_search ts_rank-ordered w/ ILIKE fallback |
 | multi-session chat (no SP doc) | ✅ DONE — backend list/delete sessions + auto-title from first message; frontend session rail (list/switch/new/delete, race-guarded) |
 | frontend chat panel (no SP doc) | ✅ DONE — `/chat` route + `Chat.tsx` (markdown answers, citation chips → wiki, bridge path, 👍/👎 → `/api/feedback/rate`, localStorage session); backend exposes `assistant_message_id` + message `id`s |

@@ -304,6 +304,7 @@ A registry (YAML or DB table) of checks: `id | stage/asset | kind(constraint|met
 | **SP3** | Retrieval serving plane: multi-channel recall (PPR+vector+BM25+graph) → rerank → entity-centric assembly | much better retrieval; upgrades wiki/search UI | SP2 |
 | **SP4** | Chat + feedback loop: conservative agent, bridge proposals, feedback→nearline, HITL ER | the talk-with-it + self-improving vision | SP3, SP2 |
 | **SP5** | Incrementality + scale: Pathway (differential dataflow), Ray (GPU batch), partitioning, escape hatches | fast fold-in, 10M-scale | SP4 |
+| **SP6** | Unified OTel stack: `grafana/otel-lgtm` container, env-gated traces/metrics/logs, `ingest.step` spans, native REST query surface for agents (spec: `2026-06-12-otel-stack-design.md`) | machine-queryable observability — agents/humans stop babysitting long runs | SP1 |
 
 **Sequencing principle:** riskiest infra first (SP1 keystone) with the current pipeline as parity oracle; the chat payoff (SP4) last but reachable. Each SP gets its own implementation plan.
 
