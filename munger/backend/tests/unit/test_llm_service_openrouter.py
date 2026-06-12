@@ -190,3 +190,58 @@ class TestLLMServiceOpenRouter:
         assert service.provider.model == "deepseek/deepseek-v4-flash"
         assert service.provider.embedding_model == "qwen/qwen3-embedding-8b"
         assert service.provider.embedding_dimensions == 768
+
+
+class TestInstructorTransportBounds:
+    """The instructor path must not inherit openai-python's 600 s default timeout.
+
+    Regression for the live-bench stall: an extraction window's structured call
+    sat in flight for many minutes because AsyncOpenAI was built without a
+    timeout (600 s default, 2 internal retries). The client must be constructed
+    with the same 120 s bound as the raw provider httpx clients and a single
+    transport retry.
+    """
+
+    def test_instructor_client_bounded_transport(self, monkeypatch):
+        import instructor
+        import openai
+
+        from pydantic import BaseModel
+
+        captured: dict = {}
+        real_async_openai = openai.AsyncOpenAI
+
+        def capturing(*args, **kwargs):
+            captured.update(kwargs)
+            return real_async_openai(*args, **kwargs)
+
+        class _StopBeforeNetwork(RuntimeError):
+            pass
+
+        def explode(client, mode):
+            raise _StopBeforeNetwork("client construction captured")
+
+        monkeypatch.setattr(openai, "AsyncOpenAI", capturing)
+        monkeypatch.setattr(instructor, "from_openai", explode)
+
+        settings = Settings(
+            LLM_DEFAULT_PROVIDER="openrouter",
+            LLM_DEFAULT_MODEL="deepseek/deepseek-v4-flash",
+            LLM_EMBEDDING_MODEL="qwen/qwen3-embedding-8b",
+            LLM_EMBEDDING_DIMENSIONS=768,
+            OPENROUTER_API_KEY="test-key",
+        )
+        service = LLMService(settings)
+
+        class _Out(BaseModel):
+            answer: str
+
+        with pytest.raises(_StopBeforeNetwork):
+            asyncio.run(
+                service._chat_structured_instructor(
+                    [{"role": "user", "content": "hi"}], _Out
+                )
+            )
+
+        assert captured["timeout"] == 120.0
+        assert captured["max_retries"] == 1

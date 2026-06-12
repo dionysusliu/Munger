@@ -696,11 +696,17 @@ class LLMService:
 
         provider = self.settings.default_llm_provider.lower()
         model = kwargs.get("model", self.settings.default_llm_model)
+        # openai-python defaults to a 600 s timeout with 2 internal retries; an
+        # unbounded structured call can stall a pipeline step for tens of
+        # minutes. Match the raw-provider httpx clients (120 s) and keep one
+        # transport retry — validation re-asks are instructor's job, not the
+        # transport's.
+        transport_kwargs = {"timeout": 120.0, "max_retries": 1}
         if provider == "openai":
             if not self.settings.openai_api_key:
                 raise LLMError("OpenAI API key not configured")
             client = instructor.from_openai(
-                AsyncOpenAI(api_key=self.settings.openai_api_key),
+                AsyncOpenAI(api_key=self.settings.openai_api_key, **transport_kwargs),
                 mode=instructor.Mode.JSON,
             )
         elif provider == "ollama":
@@ -708,6 +714,7 @@ class LLMService:
                 AsyncOpenAI(
                     base_url=f"{self.settings.ollama_base_url.rstrip('/')}/v1",
                     api_key="ollama",
+                    **transport_kwargs,
                 ),
                 mode=instructor.Mode.JSON,
             )
@@ -718,6 +725,7 @@ class LLMService:
                 AsyncOpenAI(
                     api_key=self.settings.openrouter_api_key,
                     base_url="https://openrouter.ai/api/v1",
+                    **transport_kwargs,
                 ),
                 mode=instructor.Mode.JSON,
             )
