@@ -6,7 +6,39 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+from opentelemetry import trace, metrics as _otel_metrics
+from opentelemetry.trace import StatusCode
+
 from app.runtime.events import record_ingest_event
+
+
+# ---------------------------------------------------------------------------
+# OTel helpers — module-level, no-op safe when no provider is configured.
+# ---------------------------------------------------------------------------
+
+def _get_tracer() -> trace.Tracer:
+    """Return the munger.ingest tracer.  Monkeypatchable in tests."""
+    return trace.get_tracer("munger.ingest")
+
+
+# Lazily-created instruments; None until first pipeline_step execution.
+_step_duration_hist: Any = None
+_llm_calls_ctr: Any = None
+
+
+def _get_instruments():
+    """Return (step_duration histogram, llm_calls counter).
+
+    Created once on first call; with no meter provider these are no-ops.
+    """
+    global _step_duration_hist, _llm_calls_ctr
+    if _step_duration_hist is None:
+        meter = _otel_metrics.get_meter("munger.ingest")
+        _step_duration_hist = meter.create_histogram(
+            "munger.ingest.step.duration", unit="ms"
+        )
+        _llm_calls_ctr = meter.create_counter("munger.llm.calls")
+    return _step_duration_hist, _llm_calls_ctr
 
 STEP_LABELS: dict[str, str] = {
     # Graph subgraph steps (GRAPH_STEP_ORDER)
@@ -172,6 +204,10 @@ async def pipeline_step(
     When provided, the manager snapshots stats before ``yield`` and injects the
     delta into ``metrics`` as ``llm_calls`` / ``llm_ms`` after the step body.
     Objects without ``.stats`` (e.g. ScriptedLLMService) are silently skipped.
+
+    Also records an ``ingest.step`` OTel span (no-op when no tracer provider is
+    configured) with attrs ``ingest.step_key/source_id/job_id`` at entry and
+    ``ingest.duration_ms/llm_calls/llm_ms`` + scalar metrics on exit.
     """
     await emit_pipeline_step_start(source_id=source_id, job_id=job_id, step_key=step_key)
     start = time.perf_counter()
@@ -181,6 +217,17 @@ async def pipeline_step(
     llm_stats = getattr(llm, "stats", None)
     before_calls: int = llm_stats["calls"] if llm_stats is not None else 0
     before_ms: int = llm_stats["ms"] if llm_stats is not None else 0
+
+    # OTel span — start_span returns a no-op NonRecordingSpan when no provider is set.
+    span = _get_tracer().start_span("ingest.step")
+    try:
+        span.set_attribute("ingest.step_key", step_key)
+        if source_id is not None:
+            span.set_attribute("ingest.source_id", source_id)
+        if job_id is not None:
+            span.set_attribute("ingest.job_id", job_id)
+    except Exception:
+        pass  # telemetry must never raise into app code
 
     try:
         yield metrics
@@ -194,6 +241,28 @@ async def pipeline_step(
                 metrics.setdefault("llm_calls", delta_calls)
                 metrics.setdefault("llm_ms", delta_ms)
 
+        # OTel: set exit span attributes.
+        try:
+            span.set_attribute("ingest.duration_ms", duration_ms)
+            if "llm_calls" in metrics:
+                span.set_attribute("ingest.llm_calls", metrics["llm_calls"])
+            if "llm_ms" in metrics:
+                span.set_attribute("ingest.llm_ms", metrics["llm_ms"])
+            for k, v in metrics.items():
+                if isinstance(v, (int, float, str, bool)) and k not in ("llm_calls", "llm_ms"):
+                    span.set_attribute(f"ingest.metric.{k}", v)
+        except Exception:
+            pass  # telemetry must never raise into app code
+
+        # OTel: record instruments (no-op when no meter provider is configured).
+        try:
+            step_dur, llm_ctr = _get_instruments()
+            step_dur.record(duration_ms, attributes={"step_key": step_key})
+            if "llm_calls" in metrics:
+                llm_ctr.add(metrics["llm_calls"], attributes={"step_key": step_key})
+        except Exception:
+            pass  # telemetry must never raise into app code
+
         await emit_pipeline_step_complete(
             source_id=source_id,
             job_id=job_id,
@@ -202,6 +271,10 @@ async def pipeline_step(
             metrics=metrics,
         )
     except Exception as exc:
+        try:
+            span.set_status(StatusCode.ERROR, str(exc))
+        except Exception:
+            pass  # telemetry must never raise into app code
         await emit_pipeline_step_failed(
             source_id=source_id,
             job_id=job_id,
@@ -209,3 +282,8 @@ async def pipeline_step(
             message=str(exc),
         )
         raise
+    finally:
+        try:
+            span.end()
+        except Exception:
+            pass  # telemetry must never raise into app code

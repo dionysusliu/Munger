@@ -37,9 +37,12 @@ async def lifespan(app: FastAPI):
     # --- Startup ---
     from app.db.migrate import run_migrations
     from app.observability.langsmith_setup import configure_langsmith
+    from app.core.database import engine
+    from app.observability.otel_setup import setup_otel
 
     configure_langsmith(settings)
     run_migrations()
+    setup_otel("munger-backend", app=app, sqlalchemy_engine=engine)
 
     # Ensure data directories exist
     for directory in [settings.data_dir, settings.sources_dir, settings.wiki_dir, settings.schema_dir]:

@@ -34,6 +34,7 @@ services:
       - ./data/schema:/app/data/schema
       - ../.cursor:/Users/chuang/Documents/dev/projects/Munger/.cursor
     environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://munger-lgtm:4318
       - DATABASE_URL=postgresql+psycopg://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
       - MUNGER_CHECKPOINTER_URL=postgresql://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
       - DATA_DIR=/app/data
@@ -88,6 +89,7 @@ services:
       - ./data/schema:/app/data/schema
       - ../.cursor:/Users/chuang/Documents/dev/projects/Munger/.cursor
     environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://munger-lgtm:4318
       - DATABASE_URL=postgresql+psycopg://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
       - MUNGER_CHECKPOINTER_URL=postgresql://${MUNGER_POSTGRES_APP_USER:-munger_app}:${MUNGER_DB_PASSWORD:-Munger.App.2026}@${MUNGER_POSTGRES_HOST:-pigsty}:5432/${MUNGER_POSTGRES_APP_DB:-munger}
       - DATA_DIR=/app/data
@@ -130,4 +132,16 @@ services:
     depends_on:
       munger-backend:
         condition: service_healthy
+    restart: unless-stopped
+
+  munger-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: munger-lgtm
+    ports:
+      - "13000:3000"   # Grafana UI (host 3000 = vite dev)
+      - "4317:4317"    # OTLP gRPC (bare-metal opt-in)
+      - "4318:4318"    # OTLP HTTP (bare-metal opt-in)
+      - "3200:3200"    # Tempo trace REST
+      - "3100:3100"    # Loki LogQL REST
+      - "9090:9090"    # Prometheus PromQL REST
     restart: unless-stopped
