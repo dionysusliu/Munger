@@ -395,9 +395,20 @@ class WikiService:
                 "",
             ]
 
-            # Summary pages first
-            for page_type in ["summary", "overview", "index", "entity", "concept", "model",
-                               "mechanism", "incentive", "psychology", "analysis"]:
+            # Curated ordering: summary/index first, then the 7-type ontology
+            # (see app/prompts/ontology.py)
+            curated_order = [
+                "summary",
+                "index",
+                "mental_model",
+                "concept",
+                "mechanism",
+                "person",
+                "organization",
+                "work",
+                "event",
+            ]
+            for page_type in curated_order:
                 if page_type not in by_type:
                     continue
                 type_pages = by_type[page_type]
@@ -407,10 +418,9 @@ class WikiService:
                     lines.append(f"- [[{page.title}]] — {page.slug}")
                 lines.append("")
 
-            # Any remaining types
+            # Any remaining types (legacy values pre-migration, ad-hoc types)
             for page_type, type_pages in sorted(by_type.items()):
-                if page_type in ["summary", "overview", "index", "entity", "concept", "model",
-                                  "mechanism", "incentive", "psychology", "analysis"]:
+                if page_type in curated_order:
                     continue
                 lines.append(f"## {page_type.replace('_', ' ').title()} ({len(type_pages)})")
                 lines.append("")
