@@ -74,11 +74,17 @@ kill the run):
 curl -s 'http://localhost:3200/api/search?q=\{name="POST"\}&limit=5' | jq '.traces | length'
 ```
 
-**Known latency floor (2026-06-12):** one `chat_structured` extraction window
-against `deepseek/deepseek-v4-flash` measures **~56 s**. A 10-chunk corpus at
-K=2 is therefore ≥5 min of serial extraction before reduce/wiki — the live
-baseline is DEFERRED until the ingest-latency workstream lands a faster
-extraction path; until then expect budget kills, not completions.
+**Known latency floor (2026-06-12):** one `chat_structured` extraction call
+against `deepseek/deepseek-v4-flash` measures **~55-60 s** — and stays there
+even after the output-budget prompt halved the JSON payload (10.4k → 4.7k
+chars), i.e. the floor is provider-side (hidden reasoning / routing), not
+decode length. Best full live run (concurrency 5, output budgets, 60 s
+transport bound): map of 10 chunks ≈ **5 min**, then reduce + wiki overran the
+10-min budget → killed. The committed baseline is therefore DEFERRED until a
+stable fast extraction model is picked (`LLM_EXTRACTION_MODEL` override is
+ready; candidates measured 54-75 s or 403'd via OpenRouter on 2026-06-12).
+Until then expect budget kills, not completions — that is the policy working,
+not a bug.
 
 With `OTEL_EXPORTER_OTLP_ENDPOINT` set (the compose LGTM stack exposes
 `http://localhost:4318`), the bench process exports as service
