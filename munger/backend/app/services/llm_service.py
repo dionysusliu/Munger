@@ -19,6 +19,27 @@ class LLMError(Exception):
     """Raised when an LLM operation fails."""
 
 
+def _non_retryable_status(exc: BaseException | None) -> int | None:
+    """Walk an exception chain; return a deterministic 4xx status if present.
+
+    408 (timeout) and 429 (rate limit) are transient and stay retryable.
+    Covers openai-python errors (``.status_code``) and httpx errors chained
+    behind ``LLMError`` (``.response.status_code``).
+    """
+    seen = 0
+    cur = exc
+    while cur is not None and seen < 10:
+        status = getattr(cur, "status_code", None)
+        if status is None:
+            response = getattr(cur, "response", None)
+            status = getattr(response, "status_code", None)
+        if isinstance(status, int) and 400 <= status < 500 and status not in (408, 429):
+            return status
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return None
+
+
 def extract_assistant_message_text(message: dict) -> str:
     """Extract assistant text from chat completion message payloads.
 
@@ -665,13 +686,23 @@ class LLMService:
         max_retries: int = 3,
         **kwargs,
     ):
-        """Return a Pydantic model from LLM output with validation retries."""
+        """Return a Pydantic model from LLM output with validation retries.
+
+        Deterministic provider rejections (4xx other than 408/429) abort
+        immediately — retrying a 403/404 burns calls and stalls pipeline steps
+        without any chance of success.
+        """
         if self.settings.ingest_instructor_enabled:
             try:
                 return await self._chat_structured_instructor(
                     messages, response_model, max_retries=max_retries, **kwargs
                 )
             except Exception as exc:
+                status = _non_retryable_status(exc)
+                if status is not None:
+                    raise LLMError(
+                        f"Structured chat aborted: non-retryable provider error {status}"
+                    ) from exc
                 logger.warning("Instructor structured chat failed, falling back: %s", exc)
 
         last_error: Exception | None = None
@@ -681,6 +712,8 @@ class LLMService:
                 return response_model.model_validate(self._parse_json_object(raw))
             except Exception as exc:
                 last_error = exc
+                if _non_retryable_status(exc) is not None:
+                    break
         raise LLMError(f"Structured chat failed after {max_retries} retries: {last_error}")
 
     async def _chat_structured_instructor(
@@ -698,10 +731,13 @@ class LLMService:
         model = kwargs.get("model", self.settings.default_llm_model)
         # openai-python defaults to a 600 s timeout with 2 internal retries; an
         # unbounded structured call can stall a pipeline step for tens of
-        # minutes. Match the raw-provider httpx clients (120 s) and keep one
-        # transport retry — validation re-asks are instructor's job, not the
-        # transport's.
-        transport_kwargs = {"timeout": 120.0, "max_retries": 1}
+        # minutes. Bound every transport attempt (LLM_STRUCTURED_TIMEOUT_S,
+        # default 60 s) and keep one transport retry — validation re-asks are
+        # instructor's job, not the transport's.
+        transport_kwargs = {
+            "timeout": self.settings.llm_structured_timeout_s,
+            "max_retries": 1,
+        }
         if provider == "openai":
             if not self.settings.openai_api_key:
                 raise LLMError("OpenAI API key not configured")

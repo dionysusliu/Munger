@@ -108,7 +108,10 @@ def _live_settings() -> Settings:
         ingest_extraction_window_chunks=2,
         ingest_comention_min_chunks=2,
         ingest_wiki_min_mentions=_WIKI_MIN_MENTIONS,
-        ingest_chunk_worker_concurrency=1,
+        # Mirror the production default (5): serial windows at the measured
+        # ~60 s per-call floor (deepseek-v4-flash) would blow the 10-min budget
+        # on wall-clock alone; per-step llm_ms stays per-call truthful.
+        ingest_chunk_worker_concurrency=5,
     )
 
 

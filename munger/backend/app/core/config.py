@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     embedding_model: str = Field(default="nomic-embed-text", alias="LLM_EMBEDDING_MODEL")
     embedding_dimensions: int = Field(default=768, alias="LLM_EMBEDDING_DIMENSIONS")
     max_context_tokens: int = Field(default=8192, alias="LLM_MAX_CONTEXT_TOKENS")
+    # Extraction-stage overrides (latency levers): empty model = use LLM_DEFAULT_MODEL;
+    # structured timeout bounds every instructor transport attempt (user rule: no call
+    # may hold a pipeline step past ~60 s without progress).
+    llm_extraction_model: str = Field(default="", alias="LLM_EXTRACTION_MODEL")
+    llm_structured_timeout_s: float = Field(default=60.0, alias="LLM_STRUCTURED_TIMEOUT_S")
 
     # Vector store (SP1.2): "pgvector" (embeddings in Postgres) | "lancedb"
     vector_backend: str = Field(default="pgvector", alias="VECTOR_BACKEND")
