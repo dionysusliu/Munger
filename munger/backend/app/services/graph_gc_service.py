@@ -32,6 +32,39 @@ class GraphGCService:
         self.settings = settings or get_settings()
         self.vectors = vector_store or get_vector_store(self.settings)
 
+    async def purge_aged(self) -> dict:
+        """Age-based retention (settings-gated; 0 days = keep forever).
+
+        ingest_events are observability/UI rows — cheap to lose. chunk_extractions
+        are the RAW EVIDENCE layer (north-star least-viable state): deleting them
+        forfeits re-aggregating mentions from scratch, so that knob ships OFF and
+        should be enabled only once the corpus is stable.
+        """
+        out = {"ingest_events_deleted": 0, "chunk_extractions_deleted": 0}
+        async with async_session_maker() as s:
+            days = self.settings.retention_ingest_events_days
+            if days > 0:
+                res = await s.execute(
+                    text(
+                        "DELETE FROM ingest_events "
+                        "WHERE created_at < now() - make_interval(days => :d)"
+                    ),
+                    {"d": days},
+                )
+                out["ingest_events_deleted"] = res.rowcount or 0
+            days = self.settings.retention_chunk_extractions_days
+            if days > 0:
+                res = await s.execute(
+                    text(
+                        "DELETE FROM chunk_extractions "
+                        "WHERE created_at < now() - make_interval(days => :d)"
+                    ),
+                    {"d": days},
+                )
+                out["chunk_extractions_deleted"] = res.rowcount or 0
+            await s.commit()
+        return out
+
     async def find_orphans(self) -> list[int]:
         """Entities referenced by NOTHING: no mentions, no relationships, no merge members,
         and never human-labeled (labeled_pairs would CASCADE away silently otherwise)."""
