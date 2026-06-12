@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # may hold a pipeline step past ~60 s without progress).
     llm_extraction_model: str = Field(default="", alias="LLM_EXTRACTION_MODEL")
     llm_structured_timeout_s: float = Field(default=60.0, alias="LLM_STRUCTURED_TIMEOUT_S")
+    # TOTAL wall-clock ceiling per provider call (chat/embed). Transport timeouts
+    # only bound byte gaps — a trickling response evades them (observed 15-min
+    # wiki call). Nothing is allowed to run long.
+    llm_call_timeout_s: float = Field(default=120.0, alias="LLM_CALL_TIMEOUT_S")
 
     # Vector store (SP1.2): "pgvector" (embeddings in Postgres) | "lancedb"
     vector_backend: str = Field(default="pgvector", alias="VECTOR_BACKEND")
