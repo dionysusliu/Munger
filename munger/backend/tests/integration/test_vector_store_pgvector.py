@@ -165,5 +165,5 @@ def test_get_vector_store_factory():
     settings = get_settings()
     with pytest.raises(ValueError):
         get_vector_store(settings.model_copy(update={"vector_backend": "duckdb"}))
-    with pytest.raises(RuntimeError):
-        get_vector_store(settings.model_copy(update={"vector_backend": "lancedb"}))
+    lance = get_vector_store(settings.model_copy(update={"vector_backend": "lancedb"}))
+    assert lance.backend == "lancedb"

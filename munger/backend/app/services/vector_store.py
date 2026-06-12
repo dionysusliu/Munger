@@ -151,8 +151,9 @@ def get_vector_store(settings: Settings | None = None) -> VectorStore:
     if backend == "pgvector":
         return PgVectorStore()
     if backend == "lancedb":
-        # Task 3 replaces this raise with: from app.services.lancedb_store import LanceDBStore
-        raise RuntimeError("lancedb backend arrives in Task 3 — set VECTOR_BACKEND=pgvector")
+        from app.services.lancedb_store import get_lancedb_store
+
+        return get_lancedb_store(cfg.lancedb_uri, cfg.embedding_dimensions)
     raise ValueError(
         f"Unknown VECTOR_BACKEND={backend!r} (expected 'pgvector' or 'lancedb')"
     )

@@ -148,6 +148,12 @@ All ingest artifacts live on **one Postgres instance** (Pigsty + pgvector):
 
 Chunk text stays in `chunks.content` (not FS/Lake). Entity relationships are the graph — no separate graph DB.
 
+Vector access goes through the `VectorStore` seam (`app/services/vector_store.py`), selected by
+`VECTOR_BACKEND`: `pgvector` (default) reads/writes the embedding columns above; `lancedb` keeps
+vectors in a LanceDB dataset at `LANCEDB_URI` (single-writer: the worker writes, API reads).
+The pg embedding columns stay in place until a future cutover SP; move data between backends with
+`scripts/migrate_vectors.py --to lancedb|pgvector`.
+
 ### Graph steps (`GRAPH_STEP_ORDER`)
 
 `register_source` → `parse_document` → `hash_dedup` → `chunk_document` → `map_chunks` (Send fan-out per chunk when `INGEST_MAP_MODE=send`) → `reduce_entities` → `link_entities` → `summarize_source` → `generate_wiki_pages` → `link_wiki_pages` → `finalize_ingest`
