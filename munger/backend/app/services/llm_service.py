@@ -714,7 +714,9 @@ class LLMService:
                 last_error = exc
                 if _non_retryable_status(exc) is not None:
                     break
-        raise LLMError(f"Structured chat failed after {max_retries} retries: {last_error}")
+        raise LLMError(
+            f"Structured chat failed after {max_retries} retries: {last_error}"
+        ) from last_error
 
     async def _chat_structured_instructor(
         self,
