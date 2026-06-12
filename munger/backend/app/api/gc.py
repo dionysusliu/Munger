@@ -31,3 +31,9 @@ async def prune_orphans_endpoint():
 @router.post("/delete")
 async def delete_endpoint(req: DeleteRequest):
     return await GraphGCService(get_settings()).delete_entities(req.entity_ids)
+
+
+@router.post("/retention")
+async def retention_endpoint():
+    """Age out ingest_events / chunk_extractions per RETENTION_* settings (0 = off)."""
+    return await GraphGCService(get_settings()).purge_aged()

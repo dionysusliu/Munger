@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # wiki call). Nothing is allowed to run long.
     llm_call_timeout_s: float = Field(default=120.0, alias="LLM_CALL_TIMEOUT_S")
 
+    # Retention (age-based cleanup, extends SP2.4 GC). 0 = keep forever (default).
+    # ingest_events: UI timeline rows, safe to age out. chunk_extractions: RAW LLM
+    # EVIDENCE (north-star least-viable state) — ageing it out means mentions can
+    # never be re-aggregated from scratch; enable deliberately.
+    retention_ingest_events_days: int = Field(default=0, alias="RETENTION_INGEST_EVENTS_DAYS")
+    retention_chunk_extractions_days: int = Field(default=0, alias="RETENTION_CHUNK_EXTRACTIONS_DAYS")
+
     # Vector store (SP1.2): "pgvector" (embeddings in Postgres) | "lancedb"
     vector_backend: str = Field(default="pgvector", alias="VECTOR_BACKEND")
     lancedb_uri: str = Field(default="./data/lancedb", alias="LANCEDB_URI")

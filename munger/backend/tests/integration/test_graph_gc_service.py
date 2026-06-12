@@ -154,3 +154,84 @@ def test_prune_orphans_never_deletes_human_labeled():
     assert kept_id not in run_async(_svc().find_orphans())
     run_async(_svc().prune_orphans())
     assert run_async(_exists(kept_id)), "human-labeled entity must survive auto-prune"
+
+
+class TestRetention:
+    """Age-based retention (settings-gated, default OFF)."""
+
+    @staticmethod
+    def _settings(events_days=0, extractions_days=0):
+        base = get_settings()
+        s = base.model_copy(
+            update={
+                "retention_ingest_events_days": events_days,
+                "retention_chunk_extractions_days": extractions_days,
+            }
+        )
+        return s
+
+    @staticmethod
+    async def _seed(create_source_row):
+        async with async_session_maker() as s:
+            await s.execute(
+                text(
+                    "INSERT INTO ingest_events (source_id, event_type, payload, created_at) VALUES "
+                    "(:sid, 'pipeline_step_complete', '{}', now() - interval '40 days'),"
+                    "(:sid, 'pipeline_step_complete', '{}', now())"
+                ),
+                {"sid": create_source_row.id},
+            )
+            chunk_id = (
+                await s.execute(
+                    text(
+                        "INSERT INTO chunks (source_id, chunk_index, content, token_count, doc_char_start, doc_char_end, created_at) "
+                        "VALUES (:sid, 0, 'c', 1, 0, 1, now()) RETURNING id"
+                    ),
+                    {"sid": create_source_row.id},
+                )
+            ).scalar()
+            await s.execute(
+                text(
+                    "INSERT INTO chunk_extractions (chunk_id, source_id, glean_round, entities, relationships, created_at) VALUES "
+                    "(:cid, :sid, 0, '[]', '[]', now() - interval '40 days'),"
+                    "(:cid, :sid, 1, '[]', '[]', now())"
+                ),
+                {"cid": chunk_id, "sid": create_source_row.id},
+            )
+            await s.commit()
+
+    @staticmethod
+    async def _counts():
+        async with async_session_maker() as s:
+            ev = (await s.execute(text("SELECT count(*) FROM ingest_events"))).scalar()
+            ex = (await s.execute(text("SELECT count(*) FROM chunk_extractions"))).scalar()
+        return ev, ex
+
+    def test_defaults_keep_everything(self, create_source):
+        src = create_source(status="completed", content_text="x")
+        run_async(self._seed(src))
+        before = run_async(self._counts())
+        out = run_async(GraphGCService(self._settings()).purge_aged())
+        assert out == {"ingest_events_deleted": 0, "chunk_extractions_deleted": 0}
+        assert run_async(self._counts()) == before
+
+    def test_aged_rows_purged_fresh_kept(self, create_source):
+        src = create_source(status="completed", content_text="x")
+        run_async(self._seed(src))
+        out = run_async(
+            GraphGCService(self._settings(events_days=30, extractions_days=30)).purge_aged()
+        )
+        assert out["ingest_events_deleted"] >= 1
+        assert out["chunk_extractions_deleted"] == 1
+        ev, ex = run_async(self._counts())
+        async def _fresh_remain():
+            async with async_session_maker() as s:
+                old_ev = (await s.execute(text(
+                    "SELECT count(*) FROM ingest_events WHERE created_at < now() - interval '30 days'"
+                ))).scalar()
+                old_ex = (await s.execute(text(
+                    "SELECT count(*) FROM chunk_extractions WHERE created_at < now() - interval '30 days'"
+                ))).scalar()
+            return old_ev, old_ex
+        assert run_async(_fresh_remain()) == (0, 0)
+        assert ev >= 1 and ex >= 1
