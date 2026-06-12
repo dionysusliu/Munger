@@ -26,6 +26,7 @@ from app.models.entity_relationship import EntityRelationship
 from app.models.ingest_event import IngestEvent
 from app.models.ingest_job import IngestJob
 from app.services.ingest_job_service import enqueue_ingest_job, get_active_job
+from app.services.vector_store import get_vector_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -336,6 +337,11 @@ async def delete_source(
         action="source_deleted",
         details=f"Source {source_id} deleted",
     ))
+
+    await db.commit()
+    # After the row delete commits, drop the source's chunk vectors from the
+    # vector store (no-op on pgvector — the column died with the rows).
+    await get_vector_store(get_settings()).delete_chunks_for_source(source_id)
 
     return None
 

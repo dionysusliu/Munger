@@ -10,6 +10,7 @@ from sqlalchemy import select, text
 from app.core.config import Settings, get_settings
 from app.core.database import async_session_maker
 from app.models.entity import Entity
+from app.services.vector_store import VectorStore, get_vector_store
 
 W_NAME, W_EMB, W_NEIGHBOR = 0.5, 0.3, 0.2
 
@@ -24,8 +25,9 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 class EntityResolutionService:
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, vector_store: VectorStore | None = None):
         self.settings = settings or get_settings()
+        self.vectors = vector_store or get_vector_store(self.settings)
 
     async def _block_candidates(self, tau_block: float = 0.4, cap: int = 5000) -> list[tuple[int, int]]:
         """Candidate (a<b) pairs: same entity_type, both un-merged, name-trigram sim >= tau_block.
@@ -59,11 +61,14 @@ class EntityResolutionService:
             adj.setdefault(tgt, set()).add(src)
         return adj
 
-    def _score_pair(self, a: Entity, b: Entity, adj: dict[int, set[int]]) -> float:
+    def _score_pair(
+        self, a: Entity, b: Entity, adj: dict[int, set[int]], vectors: dict[int, list[float]]
+    ) -> float:
         parts: list[tuple[float, float]] = [(fuzz.token_set_ratio(a.name, b.name) / 100.0, W_NAME)]
-        if a.embedding is not None and b.embedding is not None:
+        emb_a, emb_b = vectors.get(a.id), vectors.get(b.id)
+        if emb_a is not None and emb_b is not None:
             # clamp anti-similarity (negative cosine) to 0 — treat as "no signal", not evidence against
-            parts.append((max(0.0, _cosine(list(a.embedding), list(b.embedding))), W_EMB))
+            parts.append((max(0.0, _cosine(emb_a, emb_b)), W_EMB))
         na, nb = adj.get(a.id, set()), adj.get(b.id, set())
         if na or nb:
             inter = len(na & nb)
@@ -79,7 +84,8 @@ class EntityResolutionService:
             b = await s.get(Entity, b_id)
         if a is None or b is None:
             return 0.0
-        return self._score_pair(a, b, adj)
+        vectors = await self.vectors.get_entity_vectors([a_id, b_id])
+        return self._score_pair(a, b, adj, vectors)
 
     async def label_pair(self, a_id: int, b_id: int, label: str, note: str | None = None) -> None:
         """Record a HITL match/reject decision (ordered a<b, upsert)."""
@@ -117,19 +123,26 @@ class EntityResolutionService:
 
         ids = {e for pair in candidates for e in pair} | {e for pair in match for e in pair}
         ents: dict[int, Entity] = {}
+        vectors: dict[int, list[float]] = {}
         if ids:
             async with async_session_maker() as s:
                 ents = {
                     e.id: e
                     for e in (await s.execute(select(Entity).where(Entity.id.in_(list(ids))))).scalars().all()
                 }
+            # One batched vector fetch per scoring round (not per pair).
+            vectors = await self.vectors.get_entity_vectors(list(ids))
 
         merge_edges: set[tuple[int, int]] = set()
         for a_id, b_id in candidates:
             key = _ordered(a_id, b_id)
             if key in reject:
                 continue
-            if a_id in ents and b_id in ents and self._score_pair(ents[a_id], ents[b_id], adj) >= tau_auto:
+            if (
+                a_id in ents
+                and b_id in ents
+                and self._score_pair(ents[a_id], ents[b_id], adj, vectors) >= tau_auto
+            ):
                 merge_edges.add(key)
         for key in match:
             if key not in reject:

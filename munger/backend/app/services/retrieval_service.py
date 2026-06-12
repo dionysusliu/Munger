@@ -12,24 +12,24 @@ from app.core.config import Settings, get_settings
 from app.core.database import async_session_maker
 from app.services.edge_service import EdgeService
 from app.services.graph_service import GraphService
+from app.services.vector_store import VectorStore, get_vector_store
 
 RRF_K = 60
 FEEDBACK_WEIGHT = 0.1  # per net-rating point (SP4.3 rating consumer)
 FEEDBACK_CLAMP = 3     # net rating saturates at ±3 -> factor ∈ [0.7, 1.3]
-
-
-def _vec_literal(vec: list[float]) -> str:
-    return "[" + ",".join(repr(float(x)) for x in vec) + "]"
+_VECTOR_CHANNEL_POOL = 200  # pool cap bounds the chunk candidates the entity aggregation sees
 
 
 class RetrievalService:
     def __init__(self, settings: Settings | None = None, llm_service=None,
                  edge_service: EdgeService | None = None,
-                 graph_service: GraphService | None = None):
+                 graph_service: GraphService | None = None,
+                 vector_store: VectorStore | None = None):
         self.settings = settings or get_settings()
         self.llm = llm_service
         self.edges = edge_service or EdgeService(self.settings)
         self.graph = graph_service or GraphService(self.settings)
+        self.vectors = vector_store or get_vector_store(self.settings)
 
     async def link_seeds(self, query: str, limit: int = 5, query_vec: list[float] | None = None) -> list[int]:
         """Seed entities (canonical) for the graph channel: name match + optional vector ANN (entities HNSW)."""
@@ -46,37 +46,44 @@ class RetrievalService:
                 """),
                 {"tokens": tokens or [""], "pat": f"%{query}%", "lim": limit},
             )).all()
-            seeds: list[int] = [r[0] for r in rows]
-            if query_vec is not None:
-                vec_rows = (await s.execute(
-                    text("""
-                        SELECT COALESCE(canonical_entity_id, id) AS cid
-                        FROM entities
-                        WHERE embedding IS NOT NULL
-                        ORDER BY embedding <=> CAST(:vec AS vector)
-                        LIMIT :lim
-                    """),
-                    {"vec": _vec_literal(query_vec), "lim": limit},
-                )).all()
-                for (cid,) in vec_rows:
-                    if cid not in seeds:
+        seeds: list[int] = [r[0] for r in rows]
+        if query_vec is not None:
+            hits = await self.vectors.search_entities(query_vec, limit=limit)
+            if hits:
+                async with async_session_maker() as s:
+                    cid_rows = (await s.execute(
+                        text("SELECT id, COALESCE(canonical_entity_id, id) AS cid "
+                             "FROM entities WHERE id = ANY(:ids)"),
+                        {"ids": [h.id for h in hits]},
+                    )).all()
+                cid_by_id = {r[0]: r[1] for r in cid_rows}
+                for hit in hits:
+                    cid = cid_by_id.get(hit.id)
+                    if cid is not None and cid not in seeds:
                         seeds.append(cid)
         return seeds
 
     async def _vector_entities(self, query_vec: list[float], limit: int = 20) -> list[int]:
         """Chunk ANN -> entity_mentions -> entity_ids, ranked by best (min) cosine distance."""
+        hits = await self.vectors.search_chunks(query_vec, limit=_VECTOR_CHANNEL_POOL)
+        if not hits:
+            return []
         async with async_session_maker() as s:
             rows = (await s.execute(
                 text("""
-                    SELECT em.entity_id, MIN(c.embedding <=> CAST(:vec AS vector)) AS dist
-                    FROM chunks c
-                    JOIN entity_mentions em ON em.chunk_id = c.id
-                    WHERE c.embedding IS NOT NULL AND em.entity_id IS NOT NULL
+                    SELECT em.entity_id, MIN(h.dist) AS dist
+                    FROM unnest(CAST(:chunk_ids AS int[]), CAST(:dists AS float8[])) AS h(chunk_id, dist)
+                    JOIN entity_mentions em ON em.chunk_id = h.chunk_id
+                    WHERE em.entity_id IS NOT NULL
                     GROUP BY em.entity_id
                     ORDER BY dist ASC
                     LIMIT :lim
                 """),
-                {"vec": _vec_literal(query_vec), "lim": limit},
+                {
+                    "chunk_ids": [h.id for h in hits],
+                    "dists": [h.distance for h in hits],
+                    "lim": limit,
+                },
             )).all()
         return [r[0] for r in rows]
 

@@ -28,6 +28,7 @@ from app.services.chunk_map_status import (
 from app.services.chunk_service import ChunkService
 from app.services.ingest_job_service import touch_job_heartbeat
 from app.services.llm_service import LLMService
+from app.services.vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,12 @@ class MapChunkService:
         llm_service: LLMService | None,
         chunk_service: ChunkService | None = None,
         settings: Settings | None = None,
+        vector_store: VectorStore | None = None,
     ):
         self.llm = llm_service
         self.settings = settings or get_settings()
         self.chunk_service = chunk_service or ChunkService(llm_service=llm_service, settings=self.settings)
+        self.vectors = vector_store or get_vector_store(self.settings)
 
     def _parse_json(self, raw: str) -> dict:
         text = raw.strip()
@@ -377,6 +380,16 @@ class MapChunkService:
                         raise ValueError(f"Embedding required for chunk {chunk.id}")
                     chunk_embeddings[chunk.id] = embedding
 
+                # Vector writes go through the store; the PG UPDATE below keeps
+                # only embedding_model + map status fields.
+                await self.vectors.upsert_chunks(
+                    [
+                        (chunk.id, source_id, chunk_embeddings[chunk.id])
+                        for chunk in run
+                        if chunk_embeddings[chunk.id] is not None
+                    ]
+                )
+
                 now = datetime.now(timezone.utc)
 
                 # Step 7 (part B): persist atomically for this run
@@ -425,7 +438,6 @@ class MapChunkService:
                             .where(Chunk.id == chunk.id)
                             .values(
                                 contextual_prefix=prefix or None,
-                                embedding=embedding,
                                 embedding_model=(
                                     self.settings.embedding_model if embedding else None
                                 ),
