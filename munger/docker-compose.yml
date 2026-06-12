@@ -63,6 +63,8 @@ services:
     depends_on:
       munger-db-init:
         condition: service_completed_successfully
+      munger-lgtm:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -120,6 +122,8 @@ services:
         condition: service_completed_successfully
       munger-backend:
         condition: service_healthy
+      munger-lgtm:
+        condition: service_started
     restart: unless-stopped
 
   munger-frontend:
