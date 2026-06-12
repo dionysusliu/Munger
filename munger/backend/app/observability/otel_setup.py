@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 
 logger = logging.getLogger(__name__)
+_FASTAPI_DONE = False
+_SQLALCHEMY_DONE = False
 
 # Module-level flags — never touch the global provider a second time.
 _initialized: bool = False
@@ -117,6 +119,7 @@ def setup_otel(
 
 
 def _instrument_targets(*, app, sqlalchemy_engine) -> None:
+    global _FASTAPI_DONE, _SQLALCHEMY_DONE
     """Instrument newly-supplied targets; idempotent per target."""
     global _httpx_instrumented
 
@@ -131,19 +134,21 @@ def _instrument_targets(*, app, sqlalchemy_engine) -> None:
             logger.exception("OTel: failed to instrument httpx")
 
     # FastAPI — when app is provided.
-    if app is not None:
+    if app is not None and not _FASTAPI_DONE:
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
             FastAPIInstrumentor.instrument_app(app)
+            _FASTAPI_DONE = True
             logger.debug("OTel: FastAPI instrumented")
         except Exception:
             logger.exception("OTel: failed to instrument FastAPI")
 
     # SQLAlchemy — when engine is provided; uses sync_engine under the hood.
-    if sqlalchemy_engine is not None:
+    if sqlalchemy_engine is not None and not _SQLALCHEMY_DONE:
         try:
             from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
             SQLAlchemyInstrumentor().instrument(engine=sqlalchemy_engine.sync_engine)
+            _SQLALCHEMY_DONE = True
             logger.debug("OTel: SQLAlchemy instrumented")
         except Exception:
             logger.exception("OTel: failed to instrument SQLAlchemy")
