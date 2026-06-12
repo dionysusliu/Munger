@@ -6,7 +6,7 @@ pytest are OFF unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set).
 
 | Port | Surface |
 |---|---|
-| 13000 | Grafana UI (anonymous login enabled by the lgtm image) |
+| 13001 | Grafana UI (anonymous login enabled by the lgtm image) |
 | 3200 | Tempo trace REST |
 | 3100 | Loki LogQL REST |
 | 9090 | Prometheus PromQL REST |

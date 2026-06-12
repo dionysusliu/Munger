@@ -138,7 +138,7 @@ services:
     image: grafana/otel-lgtm:latest
     container_name: munger-lgtm
     ports:
-      - "13000:3000"   # Grafana UI (host 3000 = vite dev)
+      - "13001:3000"   # Grafana UI (13000 = dockerized frontend, 3000 = vite dev)
       - "4317:4317"    # OTLP gRPC (bare-metal opt-in)
       - "4318:4318"    # OTLP HTTP (bare-metal opt-in)
       - "3200:3200"    # Tempo trace REST
