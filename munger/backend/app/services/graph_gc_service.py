@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
 from app.core.database import async_session_maker
+from app.services.vector_store import VectorStore, get_vector_store
 
 _ORPHANS_SQL = """
     SELECT e.id FROM entities e
@@ -27,8 +28,9 @@ _ORPHANS_SQL = """
 
 
 class GraphGCService:
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, vector_store: VectorStore | None = None):
         self.settings = settings or get_settings()
+        self.vectors = vector_store or get_vector_store(self.settings)
 
     async def find_orphans(self) -> list[int]:
         """Entities referenced by NOTHING: no mentions, no relationships, no merge members,
@@ -78,6 +80,8 @@ class GraphGCService:
                 await s.execute(text(
                     "DELETE FROM entities WHERE id = ANY(:ids)"), {"ids": deletable})
             await s.commit()
+        if deletable:
+            await self.vectors.delete_entities(deletable)
         return {"deleted": len(deletable), "deleted_ids": deletable,
                 "skipped_canonical_roots": sorted(roots)}
 

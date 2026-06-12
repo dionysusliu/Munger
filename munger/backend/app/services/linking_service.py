@@ -20,6 +20,7 @@ from app.core.database import async_session_maker
 from app.models.entity import Entity, EntityMention
 from app.models.entity_relationship import EntityRelationship
 from app.services.llm_service import LLMService
+from app.services.vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,11 @@ class LinkingService:
         self,
         llm_service: LLMService | None = None,
         settings: Settings | None = None,
+        vector_store: VectorStore | None = None,
     ) -> None:
         self.llm = llm_service
         self.settings = settings or get_settings()
+        self.vectors = vector_store or get_vector_store(self.settings)
 
     # ------------------------------------------------------------------
     # Public API
@@ -69,7 +72,7 @@ class LinkingService:
         entity_embeddings = await self._embed_entities(entities)
         await self._augment_text_mentions(source_id, entities)
 
-        # Reload embeddings after persist
+        # Reload entity rows after mention augmentation (vectors come from the store)
         async with async_session_maker() as session:
             entities = list(
                 (
@@ -110,14 +113,9 @@ class LinkingService:
             logger.warning("Entity embedding failed: %s", exc)
             return 0
 
-        async with async_session_maker() as session:
-            for entity, embedding in zip(entities, embeddings):
-                await session.execute(
-                    update(Entity)
-                    .where(Entity.id == entity.id)
-                    .values(embedding=embedding)
-                )
-            await session.commit()
+        await self.vectors.upsert_entities(
+            [(entity.id, embedding) for entity, embedding in zip(entities, embeddings)]
+        )
 
         return len(entities)
 
@@ -199,17 +197,18 @@ class LinkingService:
             return 0.0
         return dot / (na * nb)
 
-    def _hybrid_score(self, a: Entity, b: Entity) -> float:
+    def _hybrid_score(self, a: Entity, b: Entity, vectors: dict[int, list[float]]) -> float:
         lexical = fuzz.token_set_ratio(a.name, b.name) / 100.0
-        emb_a = list(a.embedding) if a.embedding is not None else []
-        emb_b = list(b.embedding) if b.embedding is not None else []
-        semantic = self._cosine(emb_a, emb_b)
+        semantic = self._cosine(vectors.get(a.id) or [], vectors.get(b.id) or [])
         return self.settings.link_w_lex * lexical + self.settings.link_w_sem * semantic
 
     async def _hybrid_merge(self, source_id: int, entities: list[Entity]) -> int:
         """Within-source fuzzy/semantic merge (v1 — no global destructive merge)."""
         merges = 0
         remaining = list(entities)
+        # Batch-fetch vectors once per scoring round; Entity.embedding may be NULL
+        # in non-pgvector backends.
+        vectors = await self.vectors.get_entity_vectors([e.id for e in remaining])
         i = 0
         while i < len(remaining):
             a = remaining[i]
@@ -219,7 +218,7 @@ class LinkingService:
                 if a.entity_type != b.entity_type:
                     j += 1
                     continue
-                score = self._hybrid_score(a, b)
+                score = self._hybrid_score(a, b, vectors)
                 if score >= self.settings.link_auto_merge:
                     winner, loser = (a, b) if (a.mention_count or 0) >= (b.mention_count or 0) else (b, a)
                     await self._apply_merge(winner.id, loser.id)
@@ -342,6 +341,7 @@ class LinkingService:
             # EntityMention.entity_id=NULL for loaded loser.mentions.
             await session.execute(delete(Entity).where(Entity.id == loser_id))
             await session.commit()
+        await self.vectors.delete_entities([loser_id])
 
     # ------------------------------------------------------------------
     # Stage R-CAND + R-LINK: co-mention → related relationships

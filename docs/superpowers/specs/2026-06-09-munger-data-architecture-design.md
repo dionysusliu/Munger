@@ -71,7 +71,9 @@ flowchart TB
         RAY["Ray (GPU batch)"]
     end
     PG[("Postgres: system of record + graph")]
-    LANCE[("LanceDB: vectors / ANN")]
+    LANCE[("LanceDB: vectors / ANN
+SP1.2 ✅ VectorStore seam
+VECTOR_BACKEND flag, default pgvector")]
     API -->|enqueue| ING
     CHAT -->|feedback| REF
     RET -->|read| PG
@@ -149,7 +151,7 @@ flowchart TB
 ### Stores
 
 - **Postgres = system of record** — sources, chunks (metadata + content), evidence tables, entities, wiki, feedback, chat, DBOS workflow state.
-- **LanceDB = vectors** — embedded, disk-based, versioned; `chunk_vectors`, `entity_vectors` keyed by Postgres ids. No server.
+- **LanceDB = vectors** — embedded, disk-based, versioned; `chunk_vectors`, `entity_vectors` keyed by Postgres ids. No server. **SP1.2 ✅:** implemented behind the `VectorStore` seam (`app/services/vector_store.py` + `lancedb_store.py`); `VECTOR_BACKEND=pgvector` (default) | `lancedb`; all embedding reads/writes route through the seam; `scripts/migrate_vectors.py` moves data both directions; pg columns retained until a future cutover SP.
 - **Graph stays in Postgres** (recursive CTE, bounded fan-out). Escape hatch: KuzuDB if deep multi-hop becomes core.
 
 ### Least-viable (durable) state — store only the irreducible
@@ -181,8 +183,8 @@ Everything else (`weight`, `confidence`, `salience`, `description`, `embedding`,
 
 ### Schema deltas from today
 
-- `chunks.embedding` removed → LanceDB; keep `embedding_model`, `embedded_at`.
-- `entities.embedding` → LanceDB; add `salience FLOAT`, `canonical_entity_id` (self-FK, nullable) for **reversible** merges.
+- `chunks.embedding` removed → LanceDB; keep `embedding_model`, `embedded_at`. *(SP1.2: seam + flag shipped; column drop deferred to cutover.)*
+- `entities.embedding` → LanceDB; add `salience FLOAT`, `canonical_entity_id` (self-FK, nullable) for **reversible** merges. *(salience/canonical done; embedding same as above.)*
 - Split `entity_relationships` into **`relationship_evidence`** (durable, per-observation) + derived **`entity_edges`** (aggregated, weighted).
 - New: `feedback`, `labeled_pairs`, `chat_sessions`, `chat_messages`.
 - Partition the giant tables (`entity_mentions`, `chunk_extractions`) by source_id/time at scale.

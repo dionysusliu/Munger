@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=768, alias="LLM_EMBEDDING_DIMENSIONS")
     max_context_tokens: int = Field(default=8192, alias="LLM_MAX_CONTEXT_TOKENS")
 
+    # Vector store (SP1.2): "pgvector" (embeddings in Postgres) | "lancedb"
+    vector_backend: str = Field(default="pgvector", alias="VECTOR_BACKEND")
+    lancedb_uri: str = Field(default="./data/lancedb", alias="LANCEDB_URI")
+
     # Ingest pipeline (chunk-then-extract)
     ingest_chunk_size_tokens: int = Field(default=600, alias="INGEST_CHUNK_SIZE_TOKENS")
     ingest_chunk_overlap_tokens: int = Field(default=100, alias="INGEST_CHUNK_OVERLAP_TOKENS")

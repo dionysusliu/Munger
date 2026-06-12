@@ -26,6 +26,7 @@ tiktoken>=0.7.0
 pgvector>=0.3.0
 openai>=1.0.0
 rapidfuzz>=3.0.0
+lancedb>=0.15  # vector backend, used only when VECTOR_BACKEND=lancedb
 
 # Utils
 pydantic==2.11.4

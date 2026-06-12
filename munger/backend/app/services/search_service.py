@@ -13,6 +13,7 @@ from app.models.source import Source
 from app.models.entity import Entity
 from app.schemas.search import SearchRequest, SearchResponse, SearchResult
 from app.services.llm_service import LLMService
+from app.services.vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,13 @@ logger = logging.getLogger(__name__)
 class SearchService:
     """Full-text and semantic search across all content."""
 
-    def __init__(self, llm_service: Optional[LLMService] = None):
+    def __init__(
+        self,
+        llm_service: Optional[LLMService] = None,
+        vector_store: VectorStore | None = None,
+    ):
         self.llm_service = llm_service
+        self.vectors = vector_store or get_vector_store()
 
     # ------------------------------------------------------------------
     # Main search entry point
@@ -245,28 +251,28 @@ class SearchService:
             if not query_embedding:
                 raise RuntimeError("Empty embedding returned")
 
-            vec_literal = "[" + ",".join(str(float(x)) for x in query_embedding) + "]"
-
-            async with async_session_maker() as session:
-                rows = await session.execute(
-                    text(
-                        """
-                        SELECT c.id, c.source_id, c.content, c.doc_char_start, c.doc_char_end,
-                               (c.embedding <=> CAST(:vec AS vector)) AS distance
-                        FROM chunks c
-                        WHERE c.embedding IS NOT NULL
-                        ORDER BY c.embedding <=> CAST(:vec AS vector)
-                        LIMIT :lim
-                        """
-                    ),
-                    {"vec": vec_literal, "lim": limit},
-                )
-                chunk_hits = rows.fetchall()
+            chunk_hits = await self.vectors.search_chunks(query_embedding, limit=limit)
 
             if chunk_hits:
+                async with async_session_maker() as session:
+                    rows = await session.execute(
+                        text(
+                            """
+                            SELECT id, source_id, content, doc_char_start, doc_char_end
+                            FROM chunks
+                            WHERE id = ANY(:ids)
+                            """
+                        ),
+                        {"ids": [hit.id for hit in chunk_hits]},
+                    )
+                    rows_by_id = {row.id: row for row in rows.fetchall()}
+
                 results: list[SearchResult] = []
-                for row in chunk_hits:
-                    score = max(0.0, 1.0 - float(row.distance))
+                for hit in chunk_hits:
+                    row = rows_by_id.get(hit.id)
+                    if row is None:
+                        continue
+                    score = max(0.0, 1.0 - float(hit.distance))
                     excerpt = (row.content or "")[:300]
                     results.append(
                         SearchResult(

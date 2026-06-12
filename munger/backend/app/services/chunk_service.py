@@ -13,6 +13,7 @@ from app.core.database import async_session_maker
 from app.models.chunk import Chunk
 from app.models.source import Source
 from app.services.llm_service import LLMService
+from app.services.vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,15 @@ class ChunkSegment:
 
 
 class ChunkService:
-    def __init__(self, llm_service: LLMService | None, settings: Settings | None = None):
+    def __init__(
+        self,
+        llm_service: LLMService | None,
+        settings: Settings | None = None,
+        vector_store: VectorStore | None = None,
+    ):
         self.llm = llm_service
         self.settings = settings or get_settings()
+        self.vectors = vector_store or get_vector_store(self.settings)
 
     def _encoding(self):
         try:
@@ -189,7 +196,6 @@ class ChunkService:
                     token_count=seg.token_count,
                     doc_char_start=seg.doc_char_start,
                     doc_char_end=seg.doc_char_end,
-                    embedding=embedding,
                     embedding_model=self.settings.embedding_model if embedding else None,
                 )
                 session.add(row)
@@ -198,4 +204,13 @@ class ChunkService:
             await session.commit()
             for row in chunks:
                 await session.refresh(row)
-            return chunks
+
+        # Vector writes go through the store; the PG rows keep only embedding_model.
+        await self.vectors.upsert_chunks(
+            [
+                (row.id, source_id, embeddings[idx])
+                for idx, row in enumerate(chunks)
+                if idx < len(embeddings) and embeddings[idx] is not None
+            ]
+        )
+        return chunks

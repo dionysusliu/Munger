@@ -22,6 +22,7 @@ def _mock_settings():
     settings.ingest_max_gleanings = 1
     settings.embedding_model = "test-embed"
     settings.ingest_extraction_window_chunks = 1
+    settings.vector_backend = "pgvector"
     return settings
 
 
