@@ -18,13 +18,13 @@ flowchart LR
     L -- ":3200 Tempo REST" --> A["agents / humans\n(curl)"]
     L -- ":9090 PromQL" --> A
     L -- ":3100 LogQL" --> A
-    L -- ":13000 Grafana UI" --> H["browser"]
+    L -- ":13001 Grafana UI" --> H["browser"]
 ```
 
 ### Ports (host)
 | Port | What |
 |---|---|
-| 13000 | Grafana UI (3000 is taken by vite dev) |
+| 13001 | Grafana UI (13000 = dockerized frontend, 3000 = vite dev) |
 | 3200 | Tempo trace search/fetch REST |
 | 3100 | Loki LogQL REST |
 | 9090 | Prometheus PromQL REST |
