@@ -9,6 +9,9 @@ from app.worker.runner import run_worker_forever
 
 def main() -> None:
     configure_langsmith(get_settings())
+    from app.core.database import engine
+    from app.observability.otel_setup import setup_otel
+    setup_otel("munger-worker", sqlalchemy_engine=engine)
     asyncio.run(run_worker_forever())
 
 
