@@ -4,7 +4,7 @@ Single entry point for resuming work. Last updated 2026-06-12.
 
 ## Where things are
 
-**Branch:** `main` carries everything through SP6 + SP1.2 (PR #3–#26 merged; per-SP worktrees under `.claude/worktrees/`, self-merge authorized). Autonomous mandate queue: SP1.2 ✅ → bench T2 → corpus rebuild (18 archived sources, validate via OTel REST) → retention policies. SP5 (Pathway/Ray) stays trigger-gated at 10M scale.
+**Branch:** `main` carries everything through SP6 + SP1.2 + bench T2 (PR #3–#27 merged; per-SP worktrees under `.claude/worktrees/`, self-merge authorized). Autonomous mandate queue: SP1.2 ✅ → bench T2 ✅ → **ingest-latency workstream (inserted: measured ~56s per structured-extraction call on deepseek-v4-flash; user rule = kill anything 60s without progress)** → corpus rebuild (real archived sources, validate via OTel REST) → retention policies. SP5 (Pathway/Ray) stays trigger-gated at 10M scale.
 
 **Run the backend tests** (the venv pitfall: use the 3.12 venv, NOT system python):
 ```
@@ -12,7 +12,7 @@ cd munger/backend && TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.Ap
   /Users/chuang/Documents/dev/projects/Munger/munger/backend/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider \
   --ignore=tests/integration/test_provider_gate.py --ignore=tests/integration/test_frontend_smoke.py
 ```
-Current: **213 passed** (+bench/live deselected) (the 2 ignored tests need OpenRouter creds / a built frontend).
+Current: **214 passed** (+bench/live deselected) (the 2 ignored tests need OpenRouter creds / a built frontend).
 
 **Live LLM tests** (opt-in, real OpenRouter — `tests/live/test_live_llm.py`, marker `live_llm`): exercise `LLMService.chat`/`chat_structured`/`embed_text` + `ChatService.ask` against a real model. Deselected from the default run (marked `integration`) and skip without a key. Run:
 ```
@@ -45,7 +45,7 @@ Optional: `LIVE_CHAT_MODEL` (default `deepseek/deepseek-v4-flash`), `LIVE_EMBED_
 | `2026-06-11-streaming-chat.md` | ✅ DONE — SSE streaming chat: provider chat_stream (base fallback + OpenRouter SSE), ChatService.ask_stream (meta→delta→done, persist-at-end), POST /api/chat/stream, frontend streaming bubble w/ abort-on-switch |
 | `2026-06-11-ingest-observability-ui.md` | ✅ DONE — React Flow pipeline DAG (server-driven `/api/pipeline/topology`) + stage drawer + Gantt + map donut + run history (`/api/sources/{id}/jobs`); replaces the text stepper |
 | `2026-06-11-linking-diet.md` | ✅ DONE — co-mention diet (extract-only mentions + min-shared≥2 → 21.5k edges to ~100s), wiki mention gate (≥2 default), per-step LLM call/time telemetry; + DBOS zombie-replay test flake root-caused & fixed |
-| `2026-06-12-pipeline-bench.md` | ✅ T1 DONE — deterministic pipeline bench (synthetic corpus, regression bounds, JSON report; marker `bench`); conftest tolerates parallel-session DB stamps. T2 live tier deferred |
+| `2026-06-12-pipeline-bench.md` | ✅ T1+T2 DONE — deterministic tier (corpus, regression bounds, JSON report) + live tier (`test_bench_live.py`: real OpenRouter, warn-only baseline A/B, OTel realtime export, 60s-no-progress/10min budget policy). `baselines/baseline.json` DEFERRED — measured floor ~56s/structured extraction (deepseek-v4-flash) blocks completion within budget → ingest-latency workstream. Bonus root-cause: instructor `AsyncOpenAI` had NO timeout (openai 600s default ×2 retries = the 2h stall) → bounded 120s/1-retry + regression test |
 | **SP6** OTel stack (`specs/2026-06-12-otel-stack-design.md`, plan `2026-06-12-sp6-otel-stack.md`) | ✅ DONE — env-gated traces/metrics/logs (`setup_otel`), `ingest.step` spans + step-duration/llm-calls instruments, `munger-lgtm` compose service, agent REST recipes in `docs/OBSERVABILITY.md` |
 | **SP1.2** VectorStore + LanceDB (`specs/2026-06-12-sp1.2-vector-store-design.md`, plan `2026-06-12-sp1.2-vector-store.md`) | ✅ DONE — `VectorStore` seam (`vector_store.py`): PgVectorStore (default) + LanceDBStore (lancedb 0.33 native async, `chunk_vectors`/`entity_vectors`); ALL embedding reads/writes routed (search/retrieval/map/chunk/linking/resolution/GC); `VECTOR_BACKEND` flag; parity tests; `scripts/migrate_vectors.py --to lancedb\|pgvector [--prune]` |
 | SP3.3 ranked community search (no SP doc) | ✅ DONE — generated tsvector + GIN (mig 014); community_search ts_rank-ordered w/ ILIKE fallback |
