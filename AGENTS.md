@@ -12,6 +12,7 @@ This file is auto-loaded in Cursor. It routes agents to the right docs — do no
 | 2 | Area `AGENTS.md` | Before editing that tree (see below) |
 | 3 | Nested `AGENTS.md` | Before editing a specific subdirectory |
 | 4 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) | System design, ingest flow, data model |
+| 5 | [`docs/ARCHITECTURE_DIAGRAMS.md`](./docs/ARCHITECTURE_DIAGRAMS.md) | As-built mermaid diagrams (architecture / ingest / ER / read-write paths) with code anchors |
 
 **Area guides:**
 
