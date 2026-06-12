@@ -1,5 +1,6 @@
 """LLM service with multi-provider abstraction for OpenAI, Anthropic, Ollama, OpenRouter, and Kimi."""
 
+import asyncio
 import json
 import logging
 import re
@@ -635,6 +636,20 @@ class LLMService:
     # Core LLM operations
     # ------------------------------------------------------------------
 
+    async def _bounded(self, coro, *, op: str):
+        """Enforce a TOTAL wall-clock budget on a provider call.
+
+        httpx/openai timeouts only bound gaps between bytes — a congested
+        provider trickling a response never trips them (observed: one wiki-page
+        chat call held a pipeline step for 15 minutes). Nothing is allowed to
+        run long: every call gets a hard total-duration ceiling.
+        """
+        budget = self.settings.llm_call_timeout_s
+        try:
+            return await asyncio.wait_for(coro, timeout=budget)
+        except asyncio.TimeoutError as exc:
+            raise LLMError(f"{op} exceeded total budget of {budget:.0f}s") from exc
+
     @trace_llm(name="llm_chat", run_type="llm")
     async def chat(self, messages: list[dict], **kwargs) -> str:
         """Send a chat request to the configured provider.
@@ -644,7 +659,7 @@ class LLMService:
         separately so calls are never double-counted.
         """
         t0 = time.perf_counter()
-        result = await self.provider.chat(messages, **kwargs)
+        result = await self._bounded(self.provider.chat(messages, **kwargs), op="chat")
         self.stats["calls"] += 1
         self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
         return result
@@ -668,7 +683,7 @@ class LLMService:
         if not texts:
             return []
         t0 = time.perf_counter()
-        result = await self.provider.embed(texts)
+        result = await self._bounded(self.provider.embed(texts), op="embed")
         self.stats["calls"] += 1
         self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
         return result
@@ -771,15 +786,28 @@ class LLMService:
             raise LLMError(f"Instructor unsupported for provider: {provider}")
 
         # Count here (instructor path bypasses self.chat(), so we track separately).
+        # Total-duration ceiling on top of the per-attempt transport timeout:
+        # the whole instructor exchange (validation re-asks included) gets
+        # 2x the structured budget — a trickling response must not hold a
+        # pipeline step open (nothing is allowed to run long).
+        total_budget = 2 * self.settings.llm_structured_timeout_s
         t0 = time.perf_counter()
-        result = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            response_model=response_model,
-            max_retries=max_retries,
-            temperature=kwargs.get("temperature", 0.2),
-            max_tokens=kwargs.get("max_tokens", 4096),
-        )
+        try:
+            result = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_model=response_model,
+                    max_retries=max_retries,
+                    temperature=kwargs.get("temperature", 0.2),
+                    max_tokens=kwargs.get("max_tokens", 4096),
+                ),
+                timeout=total_budget,
+            )
+        except asyncio.TimeoutError as exc:
+            raise LLMError(
+                f"structured chat exceeded total budget of {total_budget:.0f}s"
+            ) from exc
         self.stats["calls"] += 1
         self.stats["ms"] += int((time.perf_counter() - t0) * 1000)
         return result

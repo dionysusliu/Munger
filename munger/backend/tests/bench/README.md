@@ -27,7 +27,19 @@ TEST_DATABASE_URL=postgresql+psycopg://munger_app:Munger.App.2026@localhost:5432
 (`-o addopts=""` clears the default `not bench` exclusion; then `-m bench`
 selects the tier.)
 
-## Running the live tier
+## Running the live tier — RETIRED (2026-06-12)
+
+**The live tier is retired by policy: no long-running benchmarks, period.**
+Provider-side latency floors (~55-60 s per structured call) and routing
+instability (intermittent 403s, trickling responses) made every full run a
+budget kill. The code stays as an A/B harness for the day a stable fast
+extraction model exists, but it is NOT part of any workflow — do not run it
+unattended, and never without the watchdog below. Real-pipeline cost/latency
+truth now comes from the OTel stack on the live containers instead
+(`docs/OBSERVABILITY.md`): every ingest gets per-step spans and per-call POST
+spans for free.
+
+### (Historical) how it was run
 
 Same command plus a real key — **this spends money** (one full ingest is
 ~100–250 chat/embed calls against OpenRouter; small corpus, but wiki-page
