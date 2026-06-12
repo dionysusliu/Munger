@@ -66,11 +66,30 @@ async def _truncate_all_tables() -> None:
         await conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
 
 
+from app.db.migrate import run_migrations as _REAL_RUN_MIGRATIONS  # noqa: E402
+# captured at import time: _tolerant_migrations may later be patched IN PLACE of
+# app.db.migrate.run_migrations (client fixture) — calling through the module
+# attribute would then recurse into itself.
+
+
+def _tolerant_migrations():
+    """Run alembic upgrade, tolerating a shared dev test-DB stamped AHEAD of this
+    branch by a parallel worktree (e.g. a data-only migration). Alembic raises
+    "Can't locate revision" in that case; the schema is a superset of what this
+    branch needs, so proceed. Anything else is a real failure."""
+    try:
+        _REAL_RUN_MIGRATIONS()
+    except Exception as exc:  # pragma: no cover - depends on shared-DB state
+        if "Can't locate revision" not in str(exc):
+            raise
+        import logging
+        logging.getLogger(__name__).warning(
+            "test DB stamped ahead of this branch (%s); skipping upgrade", exc)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _run_migrations_once():
-    from app.db.migrate import run_migrations
-
-    run_migrations()
+    _tolerant_migrations()
     # Kill DBOS zombies from a previous interrupted run: launch_dbos() RECOVERS any
     # non-terminal workflow from the dbos schema (which per-test truncation never
     # touches) and replays the ingest pipeline for sources that no longer exist —
@@ -97,7 +116,9 @@ async def _purge_dbos_zombies() -> None:
 def client():
     _reset_data_dirs()
     run_async(_truncate_all_tables())
-    with TestClient(app) as test_client:
+    from unittest.mock import patch as _patch
+
+    with _patch("app.db.migrate.run_migrations", new=_tolerant_migrations), TestClient(app) as test_client:
         yield test_client
 
 
