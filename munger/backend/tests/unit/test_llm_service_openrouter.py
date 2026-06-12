@@ -243,5 +243,96 @@ class TestInstructorTransportBounds:
                 )
             )
 
-        assert captured["timeout"] == 120.0
+        assert captured["timeout"] == 60.0  # LLM_STRUCTURED_TIMEOUT_S default
         assert captured["max_retries"] == 1
+
+
+class TestStructuredFastFail:
+    """chat_structured must not retry deterministic 4xx provider rejections."""
+
+    def _settings(self):
+        return Settings(
+            LLM_DEFAULT_PROVIDER="openrouter",
+            LLM_DEFAULT_MODEL="deepseek/deepseek-v4-flash",
+            LLM_EMBEDDING_MODEL="qwen/qwen3-embedding-8b",
+            LLM_EMBEDDING_DIMENSIONS=768,
+            OPENROUTER_API_KEY="test-key",
+            INGEST_INSTRUCTOR_ENABLED=False,
+        )
+
+    def _status_error(self, code: int) -> LLMError:
+        request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        response = httpx.Response(code, request=request)
+        cause = httpx.HTTPStatusError(f"HTTP {code}", request=request, response=response)
+        err = LLMError(f"OpenRouter API error: {code}")
+        err.__cause__ = cause
+        return err
+
+    def test_403_aborts_after_single_attempt(self):
+        from pydantic import BaseModel
+
+        class _Out(BaseModel):
+            answer: str
+
+        service = LLMService(self._settings())
+        calls = {"n": 0}
+
+        async def failing_chat(messages, **kwargs):
+            calls["n"] += 1
+            raise self._status_error(403)
+
+        service.chat = failing_chat
+
+        with pytest.raises(LLMError):
+            asyncio.run(service.chat_structured([{"role": "user", "content": "x"}], _Out))
+        assert calls["n"] == 1
+
+    def test_429_still_retries(self):
+        from pydantic import BaseModel
+
+        class _Out(BaseModel):
+            answer: str
+
+        service = LLMService(self._settings())
+        calls = {"n": 0}
+
+        async def failing_chat(messages, **kwargs):
+            calls["n"] += 1
+            raise self._status_error(429)
+
+        service.chat = failing_chat
+
+        with pytest.raises(LLMError):
+            asyncio.run(service.chat_structured([{"role": "user", "content": "x"}], _Out))
+        assert calls["n"] == 3
+
+    def test_instructor_4xx_skips_fallback(self, monkeypatch):
+        from pydantic import BaseModel
+
+        class _Out(BaseModel):
+            answer: str
+
+        settings = Settings(
+            LLM_DEFAULT_PROVIDER="openrouter",
+            LLM_DEFAULT_MODEL="deepseek/deepseek-v4-flash",
+            LLM_EMBEDDING_MODEL="qwen/qwen3-embedding-8b",
+            LLM_EMBEDDING_DIMENSIONS=768,
+            OPENROUTER_API_KEY="test-key",
+            INGEST_INSTRUCTOR_ENABLED=True,
+        )
+        service = LLMService(settings)
+        fallback_calls = {"n": 0}
+
+        async def instructor_403(*args, **kwargs):
+            raise self._status_error(403)
+
+        async def counting_chat(messages, **kwargs):
+            fallback_calls["n"] += 1
+            return '{"answer": "x"}'
+
+        monkeypatch.setattr(service, "_chat_structured_instructor", instructor_403)
+        service.chat = counting_chat
+
+        with pytest.raises(LLMError, match="non-retryable provider error 403"):
+            asyncio.run(service.chat_structured([{"role": "user", "content": "x"}], _Out))
+        assert fallback_calls["n"] == 0

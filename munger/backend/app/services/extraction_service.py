@@ -23,10 +23,15 @@ EXTRACT_SYSTEM = """Extract entities and relationships from the chunk text.
 Return ONLY JSON matching:
 {"entities":[{"name":"...","type":"person|concept|model|...","description":"...","char_start":0,"char_end":0}],
  "relationships":[{"source":"...","target":"...","type":"relates_to","description":"..."}]}
-Use document-global char offsets when possible. Include all salient entities."""
+Use document-global char offsets when possible.
+Output budget (latency-critical — decode time scales with output length):
+- entities: only salient ones, typically no more than 25 per chunk
+- description: one short sentence, at most 20 words
+- relationship description: at most 12 words"""
 
 GLEAN_SYSTEM = """Many entities were missed in the first pass. Return ONLY JSON:
-{"missed_entities":[...],"missed_relationships":[...],"reasoning":"..."}"""
+{"missed_entities":[...],"missed_relationships":[...],"reasoning":"..."}
+Output budget: descriptions one short sentence (at most 20 words); reasoning at most 25 words."""
 
 
 class ExtractionService:
@@ -41,6 +46,12 @@ class ExtractionService:
             text = re.sub(r"\s*```$", "", text)
         return json.loads(text)
 
+    def _call_kwargs(self) -> dict:
+        kwargs: dict = {"max_tokens": 2048}
+        if self.settings.llm_extraction_model:
+            kwargs["model"] = self.settings.llm_extraction_model
+        return kwargs
+
     async def _extract_chunk(self, chunk: Chunk, full_doc: str) -> ExtractionResult:
         if not self.llm:
             return ExtractionResult()
@@ -53,7 +64,7 @@ class ExtractionService:
             },
         ]
         structured = await self.llm.chat_structured(
-            messages, ExtractionResult, max_tokens=4096, temperature=0.2
+            messages, ExtractionResult, temperature=0.2, **self._call_kwargs()
         )
         result = (
             structured
@@ -148,7 +159,7 @@ class ExtractionService:
                 ]
                 try:
                     structured = await self.llm.chat_structured(
-                        messages, GleanResult, max_tokens=2048, temperature=0.2
+                        messages, GleanResult, temperature=0.2, **self._call_kwargs()
                     )
                     glean = (
                         structured
